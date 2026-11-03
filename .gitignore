@@ -1,0 +1,18 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Runtime data: uploads are deleted per request, but never commit any stray ones
+uploads/
+*.jsonl
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
