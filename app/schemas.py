@@ -87,3 +87,36 @@ class MaskResult(BaseModel):
 
     def clear(self) -> None:
         self.token_map.clear()
+
+
+# ---------- LLM output (phase 4) ----------
+
+
+class LearnSphereFields(BaseModel):
+    """The five extracted fields. All optional: null when absent or unreadable.
+
+    On the text route, student_name and roll_number come back as placeholders (e.g. "<PERSON_1>");
+    they are restored locally from the token map in phase 5.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    student_name: str | None = Field(default=None, max_length=120)
+    roll_number: str | None = Field(default=None, max_length=60)
+    board_or_school: str | None = Field(default=None, max_length=120)
+    passing_year: int | None = Field(default=None, ge=1950, le=2100)
+    percentage: float | None = Field(default=None, ge=0, le=100)
+
+
+class LLMOutput(BaseModel):
+    """What the single classify-and-extract call must return. Anything else is schema_invalid."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_type: DocumentType
+    fields: LearnSphereFields
+    # The percentage exactly as printed (e.g. "76.40%"), copied from the input. The grounding
+    # guard (phase 5) checks it really occurs in the OCR text; null when there is no percentage.
+    percentage_as_printed: str | None = Field(default=None, max_length=20)
+    # True when the document shows only CGPA / grade points. CGPA is never converted.
+    cgpa_only: bool = False
