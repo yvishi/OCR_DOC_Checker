@@ -73,7 +73,7 @@ def test_valid_response_parsed(settings):
     assert result.output.fields.percentage == 76.4
     assert result.output.fields.student_name == "<PERSON_1>"
     assert (result.prompt_tokens, result.completion_tokens) == (120, 40)
-    assert result.prompt_version == "extract_v1"
+    assert result.prompt_version == "extract_v3"
 
 
 def test_request_shape_privacy_and_schema(settings):
@@ -171,3 +171,17 @@ def test_no_images_never_calls_model(settings):
         client.extract_from_images([], settings, rec.transport)
     assert info.value.error_class is ErrorClass.OCR_EMPTY
     assert rec.requests == []
+
+
+def test_token_budget_leaves_room_for_reasoning(settings):
+    rec = Recorder(_reply(json.dumps(GOOD)))
+    client.extract_from_text("x", settings, rec.transport)
+    body = rec.body()
+    assert body["max_tokens"] >= 1500 and body["reasoning"] == {"effort": "low"}
+
+
+def test_truncated_json_is_schema_invalid(settings):
+    rec = Recorder(_reply('{"document_type":"mark_sheet","fields":{"student_name":"<PERSON_1>","perc'))
+    with pytest.raises(PipelineError) as info:
+        client.extract_from_text("x", settings, rec.transport)
+    assert info.value.error_class is ErrorClass.SCHEMA_INVALID

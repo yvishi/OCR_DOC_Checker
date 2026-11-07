@@ -7,7 +7,7 @@ strict JSON modes reject keywords such as minimum/maxLength.
 
 from __future__ import annotations
 
-PROMPT_VERSION = "extract_v1"
+PROMPT_VERSION = "extract_v3"
 
 SYSTEM_PROMPT = """\
 You read admission documents for LearnSphere College, an Indian college. You receive the OCR text \
@@ -17,14 +17,19 @@ of ONE document (or an image of it). Personal data has been replaced with placeh
 1. Classify the document:
    - "mark_sheet": a board or school statement of marks / marksheet / grade sheet for a student.
    - "student_id_card": a student identity card.
-   - "fee_receipt": a receipt for fees paid.
+   - "fee_receipt": a receipt issued by a college or school for tuition / admission / exam fees paid
+     by a student. Shop bills, invoices and tickets are "other".
    - "other": anything else (letters, tickets, bills, certificates that list no marks, ...),
      even if it mentions marks or a percentage.
-2. Extract these fields, or null when the document does not show them:
+2. Extract these fields for EVERY document type (mark sheets, ID cards and fee receipts alike),
+   or null when the document does not show them:
    - student_name: the student's name. Copy the placeholder exactly (e.g. "<PERSON_1>"). Never a parent's name.
    - roll_number: the roll / seat / enrollment / ID number. Copy the placeholder exactly (e.g. "<ROLL_NUMBER_1>").
-   - board_or_school: the examining board (e.g. "CBSE", "MSBSHSE", "CISCE") or the issuing school/college name.
-   - passing_year: the 4-digit year of passing. For ID cards and fee receipts use null.
+   - board_or_school: the examining board as its short code when it is one of these: "CBSE"
+     (Central Board of Secondary Education), "MSBSHSE" (Maharashtra State Board), "CISCE" (ICSE/ISC);
+     otherwise the issuing school or college name only, without its city.
+   - passing_year: the 4-digit year of passing an exam. Only mark sheets have one; academic years
+     ("2025-26") and validity years are not passing years.
    - percentage: the overall percentage exactly as printed, as a number (76.40% -> 76.4).
 3. percentage_as_printed: copy the percentage characters exactly as they appear in the input
    (e.g. "76.40%"), or null.
@@ -35,7 +40,7 @@ Rules:
 - If the percentage is missing, unreadable, covered by a stamp or garbled, use null. Do not
   recompute it from subject marks or totals.
 - Do not guess any field. Prefer null over a guess.
-- Return only the JSON object described by the schema.
+- Answer directly; no long deliberation is needed. Return only the JSON object described by the schema.
 """
 
 _NULLABLE_STRING = {"type": ["string", "null"]}

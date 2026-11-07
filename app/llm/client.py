@@ -54,7 +54,10 @@ def build_payload(messages: list[dict], settings: Settings) -> dict:
         "messages": messages,
         # No temperature: newer models (e.g. claude-haiku-5.5) don't accept sampling parameters, and
         # require_parameters=true would then match no provider at all (HTTP 404).
-        "max_tokens": 400,
+        # Reasoning tokens count against max_tokens; at 400 a sheet whose subject marks disagreed
+        # with its percentage made the model think until the JSON was cut off (finish_reason=length).
+        "max_tokens": 2000,
+        "reasoning": {"effort": "low"},
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": "learnsphere_extract", "strict": True, "schema": prompt.RESPONSE_SCHEMA},
