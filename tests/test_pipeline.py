@@ -201,3 +201,35 @@ def test_process_returns_validated_output(otel, settings):
     assert out.llm.document_type is DocumentType.MARK_SHEET
     assert out.prompt_tokens == 9 and "llm" in out.prepared.timings_ms
     assert not any(llm_settings.upload_dir.glob("*"))
+
+
+def test_extract_restores_identity_and_decides(otel, settings):
+    """Full request with a canned LLM reply: real name/roll restored locally, rule applied."""
+    import json
+
+    import httpx
+    from pydantic import SecretStr
+
+    from app.pipeline import extract
+    from app.schemas import CheckStatus
+
+    row = next(r for r in ROWS if r["true_type"] == "mark_sheet" and r["variant"] == "clean" and float(r["percentage"]) >= 62)
+    printed = f"{float(row['percentage']):.2f}%"
+    canned = {
+        "document_type": "mark_sheet",
+        "fields": {"student_name": "<PERSON_1>", "roll_number": "<ROLL_NUMBER_1>", "board_or_school": row["board_or_school"], "passing_year": int(row["passing_year"]), "percentage": float(row["percentage"])},
+        "percentage_as_printed": printed,
+        "cgpa_only": False,
+    }
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(canned)}}], "usage": {}})
+    )
+    llm_settings = settings.model_copy(update={"llm_api_key": SecretStr("k"), "llm_model": "test-model"})
+    resp = extract(Path(row["path"]).read_bytes(), llm_settings, transport)
+    assert resp.fields.student_name.lower() == row["student_name"].lower()
+    assert resp.fields.roll_number == row["roll_number"]
+    assert resp.check.status is CheckStatus.ELIGIBLE
+    assert set(resp.pipeline.timings_ms) == {"ocr", "pii", "llm", "rule"}
+    assert resp.pii.masked_before_llm and resp.pii.entity_counts.get("PERSON")
+    body = resp.model_dump_json()
+    assert "<PERSON_" not in body and "<ROLL_NUMBER_" not in body  # placeholders never reach the client

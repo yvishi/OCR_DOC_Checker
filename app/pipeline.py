@@ -22,7 +22,16 @@ from app.llm.client import LLMResult, extract_from_images, extract_from_text
 from app.ocr.tesseract import passes_text_gate, run_ocr_with_images
 from app.pii.masker import mask_text
 from app.pii.redact_image import redact_for_vision
-from app.schemas import ExtractResponse, LLMOutput
+from app.rules.eligibility import decide
+from app.rules.guards import restore_fields
+from app.schemas import (
+    Check,
+    ExtractResponse,
+    LearnSphereFields,
+    LLMOutput,
+    PiiSummary,
+    PipelineSummary,
+)
 from app.upload import delete_upload, store_upload
 
 
@@ -88,12 +97,21 @@ def _call_llm(prepared: PreparedRequest, settings: Settings, transport: httpx.Ba
     return result
 
 
+@dataclass
+class _Outcome:
+    prepared: PreparedRequest
+    llm: LLMResult | None = None
+    fields: LearnSphereFields | None = None  # restored
+    check: Check | None = None
+
+
 def _run(
     data: bytes,
     settings: Settings | None,
     with_llm: bool,
     transport: httpx.BaseTransport | None = None,
-) -> tuple[PreparedRequest, LLMResult | None]:
+    with_rules: bool = False,
+) -> _Outcome:
     settings = settings or get_settings()
     request_id = uuid.uuid4().hex
     upload = None
@@ -154,7 +172,21 @@ def _run(
             prepared.timings_ms = timings
 
             llm_result = _call_llm(prepared, settings, transport) if with_llm else None
-            # Phase 5: restore name/roll number from mask.token_map, guards, eligibility rule.
+            outcome = _Outcome(prepared=prepared, llm=llm_result)
+
+            if with_rules and llm_result is not None:
+                start = time.perf_counter()
+                with tel.stage_span("rule") as span:
+                    text_ocr = ocr if prepared.route is Route.TEXT else None
+                    token_map = mask.token_map if mask is not None else {}
+                    outcome.fields = restore_fields(
+                        llm_result.output.fields, token_map, text_ocr.text if text_ocr else None
+                    )
+                    outcome.check = decide(llm_result.output, text_ocr, settings)
+                    span.set(check_status=outcome.check.status.value)
+                timings["rule"] = _ms(start)
+                tel.record_check(outcome.check.status.value)
+                req.set(check_status=outcome.check.status.value)
 
             req.set(
                 used_vision_fallback=prepared.used_vision_fallback,
@@ -168,7 +200,7 @@ def _run(
             used_vision_fallback=prepared.used_vision_fallback,
             page_count=prepared.page_count,
         )
-        return prepared, llm_result
+        return outcome
     except PipelineError as exc:
         tel.record_request("error")
         tel.log_event("request_failed", request_id=request_id, error_class=exc.error_class.value)
@@ -186,14 +218,15 @@ def _run(
 
 def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
     """Run only the local stages (upload, OCR, masking). No network. Raises PipelineError."""
-    return _run(data, settings, with_llm=False)[0]
+    return _run(data, settings, with_llm=False).prepared
 
 
 def process(
     data: bytes, settings: Settings | None = None, transport: httpx.BaseTransport | None = None
 ) -> ProcessedRequest:
     """Local stages plus the single LLM call on masked input. Raises PipelineError."""
-    prepared, result = _run(data, settings, with_llm=True, transport=transport)
+    out = _run(data, settings, with_llm=True, transport=transport)
+    prepared, result = out.prepared, out.llm
     assert result is not None
     return ProcessedRequest(
         prepared=prepared,
@@ -213,7 +246,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("file", type=Path)
     parser.add_argument("--show-masked", action="store_true", help="print the masked text the LLM sees")
     parser.add_argument("--llm", action="store_true", help="also make the LLM call (needs LLM_API_KEY)")
+    parser.add_argument("--extract", action="store_true", help="full request: print the response JSON")
     args = parser.parse_args(argv)
+    if args.extract:
+        try:
+            print(extract(args.file.read_bytes()).model_dump_json(indent=2))
+        except PipelineError as exc:
+            print(f"error: {exc.client_message} ({exc.error_class.value})")
+            return 1
+        return 0
     try:
         if args.llm:
             processed = process(args.file.read_bytes())
@@ -242,10 +283,24 @@ if __name__ == "__main__":
 
 
 def extract(
-    data: bytes, settings: "Settings | None" = None, transport: "httpx.BaseTransport | None" = None
-) -> "ExtractResponse":
+    data: bytes, settings: Settings | None = None, transport: httpx.BaseTransport | None = None
+) -> ExtractResponse:
     """Full request: local stages, LLM call, local restore, guards and eligibility rule.
 
-    Raises PipelineError (generic client message) on failure. Implemented in phase 5.
+    Raises PipelineError (generic client message) on failure.
     """
-    raise NotImplementedError
+    out = _run(data, settings, with_llm=True, transport=transport, with_rules=True)
+    assert out.llm is not None and out.fields is not None and out.check is not None
+    prepared = out.prepared
+    return ExtractResponse(
+        request_id=prepared.request_id,
+        document_type=out.llm.output.document_type,
+        fields=out.fields,
+        check=out.check,
+        pii=PiiSummary(masked_before_llm=True, entity_counts=prepared.entity_counts),
+        pipeline=PipelineSummary(
+            ocr_engine="tesseract",
+            used_vision_fallback=prepared.used_vision_fallback,
+            timings_ms=prepared.timings_ms,
+        ),
+    )
