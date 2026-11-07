@@ -121,6 +121,31 @@ def remove_stamp(img: np.ndarray) -> tuple[np.ndarray, int]:
     return out, removed
 
 
+STAMP_MIN_SIDE_PX = 60  # a seal is a large blob; coloured letters of printed text are small
+
+
+def stamp_boxes(img: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Bounding boxes of stamp-sized red/blue ink regions (pieces merged by a closing pass)."""
+    if img.ndim != 3:
+        return []
+    mask = stamp_mask(img)
+    if not mask.any():
+        return []
+    merged = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((25, 25), np.uint8))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(merged, connectivity=8)
+    page_h, page_w = mask.shape[:2]
+    max_side = 0.6 * min(page_h, page_w)
+    boxes = []
+    for i in range(1, n):
+        x, y, w, h, _area = (int(v) for v in stats[i])
+        # Seals are roughly round and well under page size; coloured page borders, header bands
+        # and rules are long and thin, or span the page.
+        if min(w, h) < STAMP_MIN_SIDE_PX or max(w, h) > max_side or not 0.6 <= w / h <= 1.6:
+            continue
+        boxes.append((x, y, w, h))
+    return boxes
+
+
 def _otsu(gray: np.ndarray) -> np.ndarray:
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return bw
@@ -158,11 +183,19 @@ def binarize(img: np.ndarray) -> np.ndarray:
 def preprocess(img: np.ndarray, page_index: int = 0) -> tuple[np.ndarray, OcrPage]:
     """Run rotation fix, stamp removal, upscaling and binarization on one page."""
     img, degrees = fix_rotation(img)
+    boxes = stamp_boxes(img)
     img, removed = remove_stamp(img)
+    before = img.shape[1]
     img = upscale_small(img)
+    scale = img.shape[1] // before  # 1, or 2 when upscaled
     bw = binarize(img)
     h, w = bw.shape[:2]
     meta = OcrPage(
-        page=page_index, width=w, height=h, rotation_applied=degrees, stamp_pixels_removed=removed
+        page=page_index,
+        width=w,
+        height=h,
+        rotation_applied=degrees,
+        stamp_pixels_removed=removed,
+        stamp_boxes=[(x * scale, y * scale, bw_ * scale, bh * scale) for x, y, bw_, bh in boxes],
     )
     return bw, meta

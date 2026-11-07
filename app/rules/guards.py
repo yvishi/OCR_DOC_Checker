@@ -58,6 +58,7 @@ class PercentageEvidence:
     min_conf: float | None  # lowest OCR confidence among the words carrying the number
     total_matches: bool | None  # None when no readable "Total: X / Y" line exists
     total_pct: float | None
+    stamp_over_figures: bool = False  # a stamp overlaps the percentage or total words
 
 
 def _core(printed: str) -> str | None:
@@ -79,6 +80,7 @@ def percentage_evidence(llm: LLMOutput, ocr: OcrResult | None) -> PercentageEvid
     grounded = bool(core) and abs(float(core) - pct) < 0.005 and _norm(printed) in _norm(ocr.text)
 
     min_conf = None
+    chosen: list[OcrWord] = []
     if core:
         # Words whose digits are exactly the number; prefer ones on a "percentage" line.
         hits = [w for w in ocr.words if _NUMBER.fullmatch(w.text.strip("%:;,()")) and w.text.strip("%:;,()") == core]
@@ -87,7 +89,19 @@ def percentage_evidence(llm: LLMOutput, ocr: OcrResult | None) -> PercentageEvid
         if chosen:
             min_conf = max(w.conf for w in chosen)  # best reading of the number; each is one word
     total_matches, total_pct = _total_check(ocr.text, pct)
-    return PercentageEvidence(grounded, min_conf, total_matches, total_pct)
+    figure_words = list(chosen) if core and chosen else []
+    figure_words += [w for w in ocr.words if re.search(r"total|percent", _line_of(ocr.words, w), re.IGNORECASE)]
+    return PercentageEvidence(grounded, min_conf, total_matches, total_pct, _stamped(figure_words, ocr))
+
+
+def _overlaps(w: OcrWord, box: tuple[int, int, int, int]) -> bool:
+    x, y, bw, bh = box
+    return w.left < x + bw and x < w.left + w.width and w.top < y + bh and y < w.top + w.height
+
+
+def _stamped(words: list[OcrWord], ocr: OcrResult) -> bool:
+    boxes = {p.page: p.stamp_boxes for p in ocr.pages}
+    return any(_overlaps(w, b) for w in words for b in boxes.get(w.page, []))
 
 
 def _total_check(text: str, pct: float) -> tuple[bool | None, float | None]:

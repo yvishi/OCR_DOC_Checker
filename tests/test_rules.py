@@ -183,3 +183,17 @@ def test_restore_keeps_raw_value_grounded_in_ocr_text():
 
 def test_restore_vision_route_without_text_drops_raw_values():
     assert restore_fields(LearnSphereFields(student_name="Someone"), {}, None).student_name is None
+
+
+def test_stamp_over_percentage_needs_review_even_when_read_cleanly():
+    ocr = sheet("64.20%", "321 / 500")
+    pct_word = next(w for w in ocr.words if w.text == "64.20%")
+    seal = (pct_word.left - 20, pct_word.top - 20, 200, 200)
+    ocr = ocr.model_copy(update={"pages": [OcrPage(page=0, width=1000, height=1000, stamp_boxes=[seal])]})
+    assert decide(llm(64.2, "64.20%"), ocr, S).reason == REASONS["stamp"]
+
+
+def test_stamp_elsewhere_on_page_is_ignored():
+    ocr = sheet("64.20%", "321 / 500")
+    ocr = ocr.model_copy(update={"pages": [OcrPage(page=0, width=1000, height=1000, stamp_boxes=[(900, 0, 90, 90)])]})
+    assert status(llm(64.2, "64.20%"), ocr) is CheckStatus.ELIGIBLE

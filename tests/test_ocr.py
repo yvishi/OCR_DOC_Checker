@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.config import Settings
 from app.errors import GENERIC_MESSAGE, ErrorClass, PipelineError
-from app.ocr.preprocess import binarize, fix_rotation, remove_stamp
+from app.ocr.preprocess import binarize, fix_rotation, remove_stamp, stamp_boxes
 from app.ocr.render import load_pages
 from app.ocr.tesseract import ocr_image, passes_text_gate, run_ocr
 from app.schemas import StoredUpload
@@ -257,3 +257,22 @@ def test_unknown_extension_render_failed(tmp_path):
     with pytest.raises(PipelineError) as err:
         load_pages(up)
     assert err.value.error_class is ErrorClass.RENDER_FAILED
+
+
+def test_stamp_boxes_find_seal_but_not_borders_or_bands():
+    im = _page()
+    d = ImageDraw.Draw(im)
+    d.rectangle((10, 10, im.width - 10, im.height - 10), outline=(20, 40, 200), width=6)  # blue page border
+    d.rectangle((40, 30, im.width - 40, 70), fill=(200, 30, 30))  # red header band
+    boxes = stamp_boxes(_bgr(_stamped(im)))
+    assert len(boxes) == 1
+    x, y, w, h = boxes[0]
+    assert 230 <= x <= 270 and 360 <= y <= 400 and 0.6 <= w / h <= 1.6
+
+
+def test_stamp_boxes_reported_in_processed_coordinates(settings):
+    upload = store_upload(_png(_stamped(_page())), settings)
+    page = run_ocr(upload, settings).pages[0]
+    assert page.stamp_boxes, "seal not reported"
+    x, y, w, h = page.stamp_boxes[0]
+    assert x + w <= page.width and y + h <= page.height

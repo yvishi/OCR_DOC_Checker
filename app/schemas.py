@@ -57,6 +57,8 @@ class OcrPage(BaseModel):
     height: int
     rotation_applied: int = 0  # degrees clockwise the page was rotated to make it upright
     stamp_pixels_removed: int = 0
+    # Stamp/seal regions (left, top, width, height) in processed-image pixels, same space as OcrWord.
+    stamp_boxes: list[tuple[int, int, int, int]] = Field(default_factory=list)
 
 
 class OcrResult(BaseModel):

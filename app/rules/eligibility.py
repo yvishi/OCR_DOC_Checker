@@ -18,6 +18,7 @@ REASONS = {
     "missing": "The percentage is missing or unreadable.",
     "ungrounded": "The extracted percentage could not be matched to the document text.",
     "low_conf": "The percentage was read with low OCR confidence (possibly covered by a stamp).",
+    "stamp": "A stamp overlaps the percentage or total; confirm the figures manually.",
     "near_cutoff": "The percentage is close to the cutoff and could not be confirmed against the total.",
     "total_mismatch": "The printed total does not match the printed percentage.",
     "subjects": "The subject marks do not add up to the printed percentage.",
@@ -49,6 +50,8 @@ def decide(llm: LLMOutput, ocr: OcrResult | None, settings: Settings | None = No
         return review("ungrounded")
     if ev.min_conf is None or ev.min_conf < settings.field_min_conf:
         return review("low_conf")
+    if ev.stamp_over_figures:
+        return review("stamp")
     if ev.total_matches is False:
         return review("total_mismatch")
     if abs(pct - settings.cutoff_percentage) <= settings.near_cutoff_band:
