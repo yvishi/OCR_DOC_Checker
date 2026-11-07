@@ -1,0 +1,21 @@
+filename,true_type,student_name,roll_number,board_or_school,passing_year,percentage,expected_status,variant,pii_values
+test_001_mark_sheet.png,mark_sheet,Gagan Chaudhuri,CBSE23-739457,CBSE,2023,76.4,Eligible,clean,Gagan Chaudhuri|GAGAN CHAUDHURI|Vasatika Chaudhuri|VASATIKA CHAUDHURI|Xavier Chaudhuri|XAVIER CHAUDHURI|CBSE23-739457|06/09/2005|4265 3479 1602
+test_002_mark_sheet.jpg,mark_sheet,Omisha Som,M612374,MSBSHSE,2024,48.2,Not eligible,noisy,Omisha Som|OMISHA SOM|Siya Som|SIYA SOM|Rehaan Som|REHAAN SOM|M612374|16/07/2006|8029 7277 9743
+test_003_mark_sheet.png,mark_sheet,Prisha Raghavan,CISCE24/4137/989,CISCE,2024,60.0,Eligible,boundary_60,Prisha Raghavan|PRISHA RAGHAVAN|Nimrat Raghavan|NIMRAT RAGHAVAN|Frederick Raghavan|FREDERICK RAGHAVAN|CISCE24/4137/989|29/03/2006|9531 4879 8530
+test_004_mark_sheet.pdf,mark_sheet,Hemal Wali,SVPS/23/7476,Sahyadri Valley Public School,2023,59.9,Not eligible,boundary_59_9,Hemal Wali|HEMAL WALI|Triveni Wali|TRIVENI WALI|William Wali|WILLIAM WALI|SVPS/23/7476|31/07/2005
+test_005_mark_sheet.png,mark_sheet,Sarthak Bawa,M530054,MSBSHSE,2024,58.6,Not eligible,near_cutoff,Sarthak Bawa|SARTHAK BAWA|Kala Bawa|KALA BAWA|Omkaar Bawa|OMKAAR BAWA|M530054|25/11/2006|3289 7467 0041
+test_006_mark_sheet.pdf,mark_sheet,Chakrika Sampath,CBSE23-213979,CBSE,2023,61.4,Eligible,near_cutoff,Chakrika Sampath|CHAKRIKA SAMPATH|Idika Sampath|IDIKA SAMPATH|Aadi Sampath|AADI SAMPATH|CBSE23-213979|01/01/2005|6764 5582 2866
+test_007_mark_sheet.png,mark_sheet,Ronith Hari,CBSE24-660166,CBSE,2024,72.6,Needs review,stamp_over_total,Ronith Hari|RONITH HARI|Sudiksha Hari|SUDIKSHA HARI|Chaitanya Hari|CHAITANYA HARI|CBSE24-660166|15/02/2006|4057 5213 4473
+test_008_mark_sheet.jpg,mark_sheet,Avni Sethi,CBSE23-305870,CBSE,2023,,Needs review,cgpa_only,Avni Sethi|AVNI SETHI|Anya Sethi|ANYA SETHI|Hemang Sethi|HEMANG SETHI|CBSE23-305870|20/09/2005|4220 6902 7095
+test_009_mark_sheet.png,mark_sheet,Yatin Chaudhary,M380220,MSBSHSE,2024,81.2,Eligible,rotated_90,Yatin Chaudhary|YATIN CHAUDHARY|Bhanumati Chaudhary|BHANUMATI CHAUDHARY|Harish Chaudhary|HARISH CHAUDHARY|M380220|29/09/2006
+test_010_mark_sheet.jpg,mark_sheet,Gaurangi Palan,CISCE23/5600/651,CISCE,2023,52.8,Not eligible,rotated_180,Gaurangi Palan|GAURANGI PALAN|Raagini Palan|RAAGINI PALAN|Daniel Palan|DANIEL PALAN|CISCE23/5600/651|02/03/2005
+test_011_mark_sheet.pdf,mark_sheet,Tanay Jhaveri,SVPS/24/5528,Sahyadri Valley Public School,2024,66.0,Needs review,subject_mismatch,Tanay Jhaveri|TANAY JHAVERI|Pavani Jhaveri|PAVANI JHAVERI|Parth Jhaveri|PARTH JHAVERI|SVPS/24/5528|09/12/2006|4097 1841 1243
+test_012_student_id_card.png,student_id_card,Balveer Kothari,LSC/2024/BSC/6753,LearnSphere College,,,Not applicable,clean,"Balveer Kothari|LSC/2024/BSC/6753|10/12/2006|+91 95930 52357|59, Bawa Ganj, Jalgaon 571679|balveer_kothari62@example.com"
+test_013_student_id_card.jpg,student_id_card,Bimala Oak,SVPS/24/8663,Sahyadri Valley Public School,,,Not applicable,clean,"Bimala Oak|Balhaar Oak|SVPS/24/8663|07/02/2007|+91 93328 12775|37/332, Chandra Circle, Gandhidham-584889"
+test_014_student_id_card.pdf,student_id_card,Fariq Bhatt,LSC/2024/BSC/1152,LearnSphere College,,,Not applicable,clean,"Fariq Bhatt|LSC/2024/BSC/1152|25/02/2006|+91 64727 89120|H.No. 21, Sinha Road, Kirari Suleman Nagar 207247|fariq.bhatt38@example.in"
+test_015_fee_receipt.pdf,fee_receipt,Yuvraj Dhar,LSC/2025/BCOM/0632,LearnSphere College,,,Not applicable,clean,Yuvraj Dhar|Ekapad Dhar|LSC/2025/BCOM/0632|+91 63188 23349|ekapaddhar18@mail.example.org|OXFPD7639G|ekapad.dhar@oksbi
+test_016_fee_receipt.png,fee_receipt,Nirja Roy,LSC/2025/BCA/5732,LearnSphere College,,,Not applicable,clean,Nirja Roy|Oscar Roy|LSC/2025/BCA/5732|+91 66904 90886|oscarroy26@example.in|RMHPR4354E|12562983727226
+test_017_fee_receipt.jpg,fee_receipt,Xavier Dhar,LSC/2025/BSC/6607,LearnSphere College,,,Not applicable,clean,Xavier Dhar|Banjeet Dhar|LSC/2025/BSC/6607|+91 79306 86538|banjeetdhar95@example.com|MYEPD5094D
+test_018_other.png,other,,,,,,Rejected,letter,"Indrajit Merchant|+91 63377 58535|75/853, Prakash Path, Mangalore-369987|indrajit.merchant23@mail.example.org|ZMGPM6998P|Isaac Sodhi"
+test_019_other.pdf,other,,,,,,Rejected,train_ticket,Advay Dada|+91 90256 93744|9017028063|9594 7215 5736
+test_020_other.jpg,other,,,,,,Rejected,grocery_bill,Falan Chander|+91 81957 09214
