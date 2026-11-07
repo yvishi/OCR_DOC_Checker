@@ -121,7 +121,7 @@ sequenceDiagram
     "percentage": 76.4
   },
   "check": { "status": "Eligible", "reason": "Percentage is at least 60." },
-  "pii": { "masked_before_llm": true, "entity_counts": { "PERSON": 1, "PHONE_NUMBER": 1 } },
+  "pii": { "masked_before_llm": true, "entity_counts": { "PERSON": 1, "IN_PHONE": 1 } },
   "pipeline": {
     "ocr_engine": "tesseract",
     "used_vision_fallback": false,
