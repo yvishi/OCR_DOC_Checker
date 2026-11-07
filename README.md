@@ -6,7 +6,7 @@ An admissions officer uploads a PDF or image. The app classifies it as a mark sh
 
 > **Synthetic data only.** No real mark sheets, IDs or receipts belong in this repo.
 
-Status: build phases 0–4 done: synthetic data, upload + OCR + preprocessing, PII masking, telemetry, and the classify-and-extract LLM call (OpenRouter, `anthropic/claude-haiku-5.5`). Next: phase 5, local restore + guards + eligibility rule. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
+Status: build phases 0–6 done, plus the subject recompute (phase 10): synthetic data, upload + OCR + preprocessing, PII masking, telemetry, the LLM call (OpenRouter, `anthropic/claude-haiku-5.5`), local restore + guards + eligibility rule, and the FastAPI service with the Streamlit demo page. All 40 synthetic samples get their expected status. Next: phase 7 eval script, phase 8 vision-fallback checks. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
 
 ## Setup (macOS)
 
@@ -69,6 +69,10 @@ Errors return only `{"error": "Could not read this document"}`: `413` too large,
 - The Indian phone entity is `IN_PHONE`, not `PHONE_NUMBER` as in the §6 example.
 - Presidio logs raw text at DEBUG; its loggers are pinned to WARNING and do not propagate (found by the leak test).
 - A `vision` telemetry span covers image redaction on the fallback path.
+- Near the cutoff (58–62) a percentage is confirmed only by a printed total that agrees with it; high OCR confidence alone is not enough.
+- A stamp overlapping the percentage or total line always gives Needs review, even when stamp removal recovered the digits cleanly (the phase 5 "a stamped total gives Needs review" rule). Seals are detected as roughly square red/blue regions under 60% of the page.
+- The subject recompute (stretch, phase 10) is in: at least 3 parsed subject rows that differ from the printed percentage by more than 0.5 give Needs review.
+- On a Needs review result, `fields.percentage` still shows what was read, so the officer can see what to check.
 - The LLM request sends no `temperature`: `claude-haiku-5.5` rejects sampling parameters, and with `require_parameters` OpenRouter then finds no provider. `max_tokens` is 2000 with low reasoning effort, because reasoning tokens count against the limit.
 
 ## Layout
