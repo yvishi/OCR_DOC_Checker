@@ -133,3 +133,71 @@ def test_percentage_survives_masking_on_readable_mark_sheets(otel, settings):
         if "<" in line or whole not in line:
             missing.append(f"{row['filename']}:{row['variant']}")
     assert not missing, f"percentage lost in: {missing}"
+
+
+# ---------- LLM boundary (mocked transport: no network) ----------
+
+
+def test_llm_request_never_contains_pii(otel, settings):
+    """The single outbound call: across every sample, no PII value appears in the request body."""
+    import base64
+    import json
+
+    import httpx
+    from pydantic import SecretStr
+
+    from app.pipeline import process
+
+    canned = {
+        "document_type": "other",
+        "fields": {"student_name": None, "roll_number": None, "board_or_school": None, "passing_year": None, "percentage": None},
+        "percentage_as_printed": None,
+        "cgpa_only": False,
+    }
+    bodies: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(canned)}}], "usage": {}})
+
+    llm_settings = settings.model_copy(update={"llm_api_key": SecretStr("sk-or-test"), "llm_model": "test-model"})
+    leaks: list[str] = []
+    for row in ROWS:
+        before = len(bodies)
+        try:
+            process(Path(row["path"]).read_bytes(), llm_settings, httpx.MockTransport(handler))
+        except PipelineError:
+            continue
+        assert len(bodies) == before + 1, f"{row['filename']}: expected exactly one LLM call"
+        sent = " ".join(json.loads(bodies[-1]).__str__().lower().split())
+        for value in _secrets(row):
+            if len(value) >= 4 and " ".join(value.lower().split()) in sent:
+                leaks.append(f"{row['filename']}: {value[:3]}…")
+    assert bodies, "no LLM calls were made"
+    assert not leaks, f"PII sent to the LLM: {leaks}"
+
+
+def test_process_returns_validated_output(otel, settings):
+    import json
+
+    import httpx
+    from pydantic import SecretStr
+
+    from app.pipeline import process
+    from app.schemas import DocumentType
+
+    canned = {
+        "document_type": "mark_sheet",
+        "fields": {"student_name": "<PERSON_1>", "roll_number": "<ROLL_NUMBER_1>", "board_or_school": "CBSE", "passing_year": 2023, "percentage": 76.4},
+        "percentage_as_printed": "76.40%",
+        "cgpa_only": False,
+    }
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(canned)}}], "usage": {"prompt_tokens": 9, "completion_tokens": 3}})
+    )
+    llm_settings = settings.model_copy(update={"llm_api_key": SecretStr("k"), "llm_model": "test-model"})
+    row = next(r for r in ROWS if r["true_type"] == "mark_sheet" and r["variant"] == "clean")
+    out = process(Path(row["path"]).read_bytes(), llm_settings, transport)
+    assert out.llm.document_type is DocumentType.MARK_SHEET
+    assert out.prompt_tokens == 9 and "llm" in out.prepared.timings_ms
+    assert not any(llm_settings.upload_dir.glob("*"))

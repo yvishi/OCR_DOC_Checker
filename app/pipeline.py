@@ -1,7 +1,8 @@
-"""Stage orchestration for increment 1: upload -> OCR -> route -> PII masking / image redaction.
+"""Stage orchestration: upload -> OCR -> route -> PII masking / image redaction -> LLM.
 
-The LLM call (phase 4), restore + rules (phase 5) and API (phase 6) plug in after `prepare`.
-Until then the request ends here, so the token map is cleared and the upload deleted in `finally`.
+`prepare` runs only the local stages (no network). `process` adds the single LLM call.
+Restore + rules (phase 5) and the API (phase 6) plug in after the LLM stage, inside `_run`, so the
+token map is still in memory for the local restore. `finally` clears it and deletes the upload.
 """
 
 from __future__ import annotations
@@ -11,14 +12,17 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 
+import httpx
 import numpy as np
 
 from app import telemetry as tel
 from app.config import Settings, get_settings
 from app.errors import ErrorClass, PipelineError
+from app.llm.client import LLMResult, extract_from_images, extract_from_text
 from app.ocr.tesseract import passes_text_gate, run_ocr_with_images
 from app.pii.masker import mask_text
 from app.pii.redact_image import redact_for_vision
+from app.schemas import LLMOutput
 from app.upload import delete_upload, store_upload
 
 
@@ -31,7 +35,7 @@ class Route(str, Enum):
 class PreparedRequest:
     """Everything the LLM stage is allowed to see, plus local-only stats.
 
-    Holds no unmasked text and no token map: those never leave `prepare`.
+    Holds no unmasked text and no token map: those never leave `_run`.
     """
 
     request_id: str
@@ -52,12 +56,44 @@ class PreparedRequest:
         return self.route is Route.VISION
 
 
+@dataclass
+class ProcessedRequest:
+    """Result of the local stages plus the validated LLM output (fields still masked)."""
+
+    prepared: PreparedRequest
+    llm: LLMOutput
+    model_name: str
+    prompt_tokens: int
+    completion_tokens: int
+
+
 def _ms(start: float) -> float:
     return round((time.perf_counter() - start) * 1000.0, 1)
 
 
-def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
-    """Run every local stage for one uploaded document. Raises PipelineError (generic message)."""
+def _call_llm(prepared: PreparedRequest, settings: Settings, transport: httpx.BaseTransport | None) -> LLMResult:
+    start = time.perf_counter()
+    with tel.stage_span("llm", model_name=settings.llm_model) as span:
+        if prepared.route is Route.TEXT:
+            result = extract_from_text(prepared.masked_text or "", settings, transport)
+        else:
+            result = extract_from_images(prepared.redacted_images, settings, transport)
+        span.set(
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            prompt_version=result.prompt_version,
+            document_type=result.output.document_type.value,
+        )
+    prepared.timings_ms["llm"] = _ms(start)
+    return result
+
+
+def _run(
+    data: bytes,
+    settings: Settings | None,
+    with_llm: bool,
+    transport: httpx.BaseTransport | None = None,
+) -> tuple[PreparedRequest, LLMResult | None]:
     settings = settings or get_settings()
     request_id = uuid.uuid4().hex
     upload = None
@@ -110,14 +146,21 @@ def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
             else:
                 if not ocr.has_boxes:
                     raise PipelineError(ErrorClass.OCR_EMPTY)
-                with tel.stage_span("vision", used_vision_fallback=True) as span:
+                with tel.stage_span("vision", used_vision_fallback=True):
                     redacted = redact_for_vision(images, ocr)
                 tel.record_fallback()
                 prepared = PreparedRequest(route=Route.VISION, redacted_images=redacted, **common)
             timings["pii"] = _ms(start)
             prepared.timings_ms = timings
 
-            req.set(used_vision_fallback=prepared.used_vision_fallback, outcome="success")
+            llm_result = _call_llm(prepared, settings, transport) if with_llm else None
+            # Phase 5: restore name/roll number from mask.token_map, guards, eligibility rule.
+
+            req.set(
+                used_vision_fallback=prepared.used_vision_fallback,
+                outcome="success",
+                **({"document_type": llm_result.output.document_type.value} if llm_result else {}),
+            )
         tel.record_request("success")
         tel.log_event(
             "request_completed",
@@ -125,7 +168,7 @@ def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
             used_vision_fallback=prepared.used_vision_fallback,
             page_count=prepared.page_count,
         )
-        return prepared
+        return prepared, llm_result
     except PipelineError as exc:
         tel.record_request("error")
         tel.log_event("request_failed", request_id=request_id, error_class=exc.error_class.value)
@@ -141,17 +184,42 @@ def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
             delete_upload(upload)
 
 
+def prepare(data: bytes, settings: Settings | None = None) -> PreparedRequest:
+    """Run only the local stages (upload, OCR, masking). No network. Raises PipelineError."""
+    return _run(data, settings, with_llm=False)[0]
+
+
+def process(
+    data: bytes, settings: Settings | None = None, transport: httpx.BaseTransport | None = None
+) -> ProcessedRequest:
+    """Local stages plus the single LLM call on masked input. Raises PipelineError."""
+    prepared, result = _run(data, settings, with_llm=True, transport=transport)
+    assert result is not None
+    return ProcessedRequest(
+        prepared=prepared,
+        llm=result.output,
+        model_name=result.model_name,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    """`python -m app.pipeline <file> [--show-masked]`: run the local stages and print stats."""
+    """`python -m app.pipeline <file> [--show-masked] [--llm]`: run the stages and print stats."""
     import argparse
     from pathlib import Path
 
     parser = argparse.ArgumentParser(prog="python -m app.pipeline", description=main.__doc__)
     parser.add_argument("file", type=Path)
-    parser.add_argument("--show-masked", action="store_true", help="print the masked text the LLM would see")
+    parser.add_argument("--show-masked", action="store_true", help="print the masked text the LLM sees")
+    parser.add_argument("--llm", action="store_true", help="also make the LLM call (needs LLM_API_KEY)")
     args = parser.parse_args(argv)
     try:
-        prepared = prepare(args.file.read_bytes())
+        if args.llm:
+            processed = process(args.file.read_bytes())
+            prepared = processed.prepared
+        else:
+            processed, prepared = None, prepare(args.file.read_bytes())
     except PipelineError as exc:
         print(f"error: {exc.client_message} ({exc.error_class.value})")
         return 1
@@ -161,8 +229,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mean_conf:        {prepared.mean_conf:.1f}  (words < 80: {prepared.low_conf_word_count})")
     print(f"entity_counts:    {prepared.entity_counts}")
     print(f"timings_ms:       {prepared.timings_ms}")
+    if processed is not None:
+        print(f"model:            {processed.model_name}  tokens={processed.prompt_tokens}+{processed.completion_tokens}")
+        print(f"llm_output:       {processed.llm.model_dump_json()}")
     if args.show_masked and prepared.masked_text:
-        print("\n--- masked text (what the LLM will see) ---\n" + prepared.masked_text)
+        print("\n--- masked text (what the LLM sees) ---\n" + prepared.masked_text)
     return 0
 
 
