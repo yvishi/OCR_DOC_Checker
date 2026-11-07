@@ -262,7 +262,7 @@ def _roll_patterns() -> PatternRecognizer:
 
 def _roll_label() -> LabelAnchoredRecognizer:
     strong = r"roll|seat|enrol(?:l)?ment|enrolment|exam(?:ination)?[ \t]+roll|hall[ \t]+ticket|admit[ \t]+card"
-    weak = r"registration|regn?\.?|reg|application|admission|index|candidate|student|exam(?:ination)?"
+    weak = r"registration|regn?\.?|reg|application|admission|index|candidate|student|exam(?:ination)?|unique|uid"
     regex = (
         rf"(?:\b(?:{strong})[ \t]*{_NO}|\b(?:{weak})[ \t]*(?:no\b\.?|num\b\.?|number|#|id\b|code\b)){_SEP}"
         r"(?P<value>[A-Z0-9](?:[A-Z0-9]|[\-/](?=[A-Z0-9])){3,24})(?![A-Za-z0-9])"

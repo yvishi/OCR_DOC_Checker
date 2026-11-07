@@ -332,3 +332,9 @@ def test_grade_codes_and_grand_total_never_masked():
     # spaCy tags "C1\nGrand Total" as a facility; neither fragment is PII.
     text = "083 COMPUTER SCIENCE 100 055 C1\nGrand Total: 382 / 500\nPercentage: 76.40%"
     assert mask_text(text).masked_text == text
+
+
+def test_cisce_unique_id_masked_whole():
+    r = mask_text("Unique ID: CISCE24/4137/989\nYear of Passing: 2024")
+    assert "989" not in r.masked_text and "4137" not in r.masked_text
+    assert r.token_map["<ROLL_NUMBER_1>"] == "CISCE24/4137/989"
