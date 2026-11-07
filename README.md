@@ -6,7 +6,7 @@ An admissions officer uploads a PDF or image. The app classifies it as a mark sh
 
 > **Synthetic data only.** No real mark sheets, IDs or receipts belong in this repo.
 
-Status: **increment 1** (build phases 0–3): synthetic data, upload + OCR + preprocessing, PII masking, telemetry. Next: phase 4, the LLM call through OpenRouter. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
+Status: build phases 0–4 done: synthetic data, upload + OCR + preprocessing, PII masking, telemetry, and the classify-and-extract LLM call (OpenRouter, `anthropic/claude-haiku-5.5`). Next: phase 5, local restore + guards + eligibility rule. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
 
 ## Setup (macOS)
 
@@ -40,6 +40,7 @@ Status: **increment 1** (build phases 0–3): synthetic data, upload + OCR + pre
 python -m data.generate                                   # 20 dev + 20 test synthetic documents, CSVs
 python -m app.ocr data/samples/test/test_009_mark_sheet.png          # OCR stats only
 python -m app.pipeline data/samples/test/test_001_mark_sheet.png --show-masked   # what the LLM will see
+python -m app.pipeline data/samples/test/test_001_mark_sheet.png --llm         # plus the LLM call (needs .env)
 pytest                                                    # unit tests + telemetry leak test over all samples
 ```
 
@@ -49,6 +50,7 @@ pytest                                                    # unit tests + telemet
 - The Indian phone entity is `IN_PHONE`, not `PHONE_NUMBER` as in the §6 example.
 - Presidio logs raw text at DEBUG; its loggers are pinned to WARNING and do not propagate (found by the leak test).
 - A `vision` telemetry span covers image redaction on the fallback path.
+- The LLM request sends no `temperature`: `claude-haiku-5.5` rejects sampling parameters, and with `require_parameters` OpenRouter then finds no provider. `max_tokens` is 2000 with low reasoning effort, because reasoning tokens count against the limit.
 
 ## Layout
 
