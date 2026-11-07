@@ -44,6 +44,25 @@ python -m app.pipeline data/samples/test/test_001_mark_sheet.png --llm         #
 pytest                                                    # unit tests + telemetry leak test over all samples
 ```
 
+## Run the demo
+
+Start the API and the page in two terminals (from the repo root, with the venv active):
+
+```bash
+uvicorn app.main:app --port 8000          # API
+streamlit run ui/streamlit_app.py         # page at http://localhost:8501 (API_URL defaults to http://localhost:8000)
+```
+
+Upload a PDF, PNG or JPG (max 10 MB), or pick a synthetic test document under **Or try a sample** in the sidebar, then press **Check document**. The page shows the eligibility status, the five fields, the masking summary, the stage timings and the response JSON, which you can download.
+
+| Endpoint | Returns |
+|---|---|
+| `POST /v1/extract` (multipart field `file`) | `200` with the §6 response JSON |
+| `GET /healthz` | `{"status": "ok"}` |
+| `GET /v1/telemetry/last` | allowlisted summary of the latest request, or `null` |
+
+Errors return only `{"error": "Could not read this document"}`: `413` too large, `415` not a PDF/PNG/JPG, `400` empty, `422` unreadable or missing `file`, `502` AI step failed, `500` anything else. CORS allows `http://localhost:8501` plus any comma-separated `CORS_ORIGIN` values.
+
 ## Deviations from the architecture so far
 
 - Tesseract runs with `--psm 6` (single uniform block), not the default `--psm 3`. Mark sheets and ID cards are two-column (`Label: value`); `--psm 3` read all labels and then all values, which broke label-anchored masking and scrambled the text for the LLM. `--psm 6` cut masking misses from 5 documents to 2 (then 0 with two new recognizers) for about 2 points of mean confidence.
