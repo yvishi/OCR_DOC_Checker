@@ -20,7 +20,7 @@ OCR and PII masking run locally. The only network call is a single LLM request, 
 | Preprocessing | `opencv-python-headless`, `numpy`, `pillow` | Rotation fix, stamp-hue removal, binarization, crops |
 | PII masking | `presidio-analyzer`, `presidio-anonymizer` | Local detection and anonymization; custom recognizers for Indian IDs |
 | NER model | spaCy `en_core_web_lg` | Finds names more reliably than the small model |
-| LLM | **Pending decision:** Groq free tier (recommended, no training on API data) or Ollama (local alternative) via `httpx` | One classify-and-extract call on masked text |
+| LLM | **OpenRouter** (OpenAI-compatible `/chat/completions`) via `httpx`; model chosen by `LLM_MODEL`, vision-capable for the fallback | One classify-and-extract call on masked text; one key gives access to many models |
 | Validation | `pydantic`, `pydantic-settings` | Strict output schema; settings read from env |
 | API | `fastapi`, `uvicorn[standard]`, `python-multipart` | `POST /v1/extract` with multipart upload |
 | UI | `streamlit` (**tentative**, pending confirmation) | The page calls the API, so both return the same object |
@@ -150,7 +150,7 @@ sequenceDiagram
 ## 8. Security rules
 
 - Synthetic documents only. No real mark sheets, IDs or receipts in the repo, the demo or the test set.
-- OCR and Presidio run locally. The LLM call happens only after masking, on a plan that doesn't train on prompts.
+- OCR and Presidio run locally. The LLM call happens only after masking, on a plan that doesn't train on prompts. Every OpenRouter request sets `provider.data_collection = "deny"`, so it is only routed to providers that don't store or train on prompts.
 - Custom recognizers cover Aadhaar, PAN, Indian mobile numbers, bank accounts, policy numbers, roll numbers, date of birth, email, parent names and addresses.
 - Placeholders are stable within a request. Values are normalized for case and whitespace first, so `RAVI MENON` and `Ravi Menon` get the same token. The map is kept in memory only and cleared in `finally`.
 - The vision fallback sends only a redacted image. If OCR found no boxes, the hosted model is never called.

@@ -6,7 +6,7 @@ An admissions officer uploads a PDF or image. The app classifies it as a mark sh
 
 > **Synthetic data only.** No real mark sheets, IDs or receipts belong in this repo.
 
-Status: **increment 1** (build phases 0–3): synthetic data, upload + OCR + preprocessing, PII masking, telemetry. The LLM call (phase 4) waits on the provider decision. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
+Status: **increment 1** (build phases 0–3): synthetic data, upload + OCR + preprocessing, PII masking, telemetry. Next: phase 4, the LLM call through OpenRouter. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
 
 ## Setup (macOS)
 

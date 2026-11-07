@@ -24,8 +24,9 @@ _TESSERACT_FALLBACKS = (
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
 
-    # LLM (provider still to be decided; unused in increment 1)
-    llm_provider: str = ""
+    # LLM via OpenRouter (OpenAI-compatible API)
+    llm_provider: str = "openrouter"
+    llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_api_key: SecretStr = SecretStr("")
     llm_model: str = ""
 
