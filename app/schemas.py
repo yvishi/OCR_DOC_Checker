@@ -120,3 +120,41 @@ class LLMOutput(BaseModel):
     percentage_as_printed: str | None = Field(default=None, max_length=20)
     # True when the document shows only CGPA / grade points. CGPA is never converted.
     cgpa_only: bool = False
+
+
+# ---------- API response (docs/ARCHITECTURE.md §6) ----------
+
+
+class CheckStatus(str, Enum):
+    ELIGIBLE = "Eligible"
+    NOT_ELIGIBLE = "Not eligible"
+    NEEDS_REVIEW = "Needs review"
+    NOT_APPLICABLE = "Not applicable"
+    REJECTED = "Rejected"
+
+
+class Check(BaseModel):
+    status: CheckStatus
+    reason: str  # never contains names, IDs or numbers that identify a student
+
+
+class PiiSummary(BaseModel):
+    masked_before_llm: bool
+    entity_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class PipelineSummary(BaseModel):
+    ocr_engine: str = "tesseract"
+    used_vision_fallback: bool = False
+    timings_ms: dict[str, float] = Field(default_factory=dict)  # ocr, pii, llm, rule
+
+
+class ExtractResponse(BaseModel):
+    """The one object returned to both the web page and POST /v1/extract."""
+
+    request_id: str
+    document_type: DocumentType
+    fields: LearnSphereFields  # restored locally: real name and roll number, never placeholders
+    check: Check
+    pii: PiiSummary
+    pipeline: PipelineSummary

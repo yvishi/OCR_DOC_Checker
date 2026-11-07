@@ -22,7 +22,7 @@ from app.llm.client import LLMResult, extract_from_images, extract_from_text
 from app.ocr.tesseract import passes_text_gate, run_ocr_with_images
 from app.pii.masker import mask_text
 from app.pii.redact_image import redact_for_vision
-from app.schemas import LLMOutput
+from app.schemas import ExtractResponse, LLMOutput
 from app.upload import delete_upload, store_upload
 
 
@@ -239,3 +239,13 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def extract(
+    data: bytes, settings: "Settings | None" = None, transport: "httpx.BaseTransport | None" = None
+) -> "ExtractResponse":
+    """Full request: local stages, LLM call, local restore, guards and eligibility rule.
+
+    Raises PipelineError (generic client message) on failure. Implemented in phase 5.
+    """
+    raise NotImplementedError
