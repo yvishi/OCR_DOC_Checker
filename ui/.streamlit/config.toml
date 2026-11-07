@@ -1,0 +1,17 @@
+# Theme and limits for the demo page (picked up because it sits next to ui/streamlit_app.py).
+
+[theme]
+base = "light"
+primaryColor = "#1e3a8a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#0f172a"
+
+[server]
+maxUploadSize = 10  # MB, same cap as the API
+
+[browser]
+gatherUsageStats = false  # no network calls from the demo page
+
+[client]
+toolbarMode = "minimal"
