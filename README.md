@@ -6,7 +6,9 @@ An admissions officer uploads a PDF or image. The app classifies it as a mark sh
 
 > **Synthetic data only.** No real mark sheets, IDs or receipts belong in this repo.
 
-Status: build phases 0–6 done, plus the subject recompute (phase 10): synthetic data, upload + OCR + preprocessing, PII masking, telemetry, the LLM call (OpenRouter, `anthropic/claude-haiku-5.5`), local restore + guards + eligibility rule, and the FastAPI service with the Streamlit demo page. All 40 synthetic samples get their expected status. Next: phase 7 eval script, phase 8 vision-fallback checks. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
+Status: build phases 0–8 and 10 are done: synthetic data, upload + OCR + preprocessing, PII masking, telemetry, the LLM call (OpenRouter, `anthropic/claude-haiku-5.5`), local restore + guards + eligibility rule, the FastAPI service with the Streamlit demo page, the eval script, the vision fallback, and the subject recompute. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workflow and stack.
+
+Latest live eval on all 49 synthetic documents (29 dev, 20 held-back test): status 49/49, document type 49/49, fields 243/245. These documents come from one generator, so the numbers do not predict accuracy on real scans.
 
 ## Setup (macOS)
 
@@ -37,12 +39,15 @@ Status: build phases 0–6 done, plus the subject recompute (phase 10): syntheti
 ## Run (increment 1)
 
 ```bash
-python -m data.generate                                   # 20 dev + 20 test synthetic documents, CSVs
+python -m data.generate                                   # 29 dev + 20 test synthetic documents, CSVs
 python -m app.ocr data/samples/test/test_009_mark_sheet.png          # OCR stats only
 python -m app.pipeline data/samples/test/test_001_mark_sheet.png --show-masked   # what the LLM will see
 python -m app.pipeline data/samples/test/test_001_mark_sheet.png --llm         # plus the LLM call (needs .env)
 pytest                                                    # unit tests + telemetry leak test over all samples
+python -m eval.evaluate --set all                         # live accuracy by type and variant (one LLM call per document, needs .env)
 ```
+
+The eval's default set is the held-back `test` set. It prints no names or IDs, and writes `eval/last_report.jsonl` (gitignored).
 
 ## Run the demo
 
@@ -72,6 +77,9 @@ Errors return only `{"error": "Could not read this document"}`: `413` too large,
 - Near the cutoff (58–62) a percentage is confirmed only by a printed total that agrees with it; high OCR confidence alone is not enough.
 - A stamp overlapping the percentage or total line always gives Needs review, even when stamp removal recovered the digits cleanly (the phase 5 "a stamped total gives Needs review" rule). Seals are detected as roughly square red/blue regions under 60% of the page.
 - The subject recompute (stretch, phase 10) is in: at least 3 parsed subject rows that differ from the printed percentage by more than 0.5 give Needs review.
+- When the recompute disagrees, `check.printed_percentage` and `check.recomputed_percentage` carry both figures for the operator view. They are omitted otherwise and never reach telemetry.
+- Any overall result that is not a percentage (CGPA, SGPA, GPA, grade points, percentile, letter grades, division) gives Needs review and is never converted. A local check on the document's own label backs up the LLM. A figure with no percentage label or % sign also gives Needs review.
+- A blank upload, where OCR finds no word boxes, cannot be redacted, so it returns the generic "Could not read this document" error with no LLM call. Its label in `dev_set.csv` is `Could not read`. Pages with no word boxes are also left out of multi-page vision requests.
 - On a Needs review result, `fields.percentage` still shows what was read, so the officer can see what to check.
 - The LLM request sends no `temperature`: `claude-haiku-5.5` rejects sampling parameters, and with `require_parameters` OpenRouter then finds no provider. `max_tokens` is 2000 with low reasoning effort, because reasoning tokens count against the limit.
 
