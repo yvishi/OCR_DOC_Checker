@@ -649,9 +649,8 @@ def _plan_other(plan: DocPlan, fk: Faker, rng: random.Random, p: dict[str, Any])
     kind = p["kind"]
     if kind in TEXTLESS_KINDS:
         plan.data = {"kind": kind}
-        # No OCR boxes means nothing can be redacted, so a blank page ends in the manual-review error.
-        status = "Could not read" if kind == "blank_page" else "Rejected"
-        plan.row = _row(plan, expected_status=status, pii_values=[])
+        # No readable text: never sent to the hosted model, so an officer has to look at it.
+        plan.row = _row(plan, expected_status="Needs review", pii_values=[])
         return
     person = make_person(fk, rng, rng.randint(1965, 1995))
     ph = phone(rng)

@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Gates and guards (see docs/ARCHITECTURE.md §3–4)
     ocr_min_chars: int = 40  # letters/digits needed before we trust the text path
     ocr_min_mean_conf: float = 60.0
+    # A page counts as having text only with this many words of 3+ letters/digits at this confidence.
+    # Below that an image may be a personal photo, so it is never sent to the hosted model.
+    ocr_min_readable_words: int = 3
+    ocr_readable_word_conf: float = 60.0
     field_min_conf: float = 80.0  # per-word confidence for the percentage
     cutoff_percentage: float = 60.0
     near_cutoff_band: float = 2.0

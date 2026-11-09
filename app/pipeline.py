@@ -19,13 +19,15 @@ from app import telemetry as tel
 from app.config import Settings, get_settings
 from app.errors import ErrorClass, PipelineError
 from app.llm.client import LLMResult, extract_from_images, extract_from_text
-from app.ocr.tesseract import passes_text_gate, run_ocr_with_images
+from app.ocr.tesseract import passes_text_gate, readable_pages, run_ocr_with_images
 from app.pii.masker import mask_text
 from app.pii.redact_image import redact_for_vision
-from app.rules.eligibility import decide
+from app.rules.eligibility import REASONS, decide
 from app.rules.guards import restore_fields
 from app.schemas import (
     Check,
+    CheckStatus,
+    DocumentType,
     ExtractResponse,
     LearnSphereFields,
     LLMOutput,
@@ -37,7 +39,8 @@ from app.upload import delete_upload, store_upload
 
 class Route(str, Enum):
     TEXT = "text"  # enough confident text: masked text goes to the LLM
-    VISION = "vision"  # weak text but word boxes exist: redacted image goes to the LLM
+    VISION = "vision"  # weak text but real words exist: redacted image goes to the LLM
+    MANUAL = "manual"  # no real words (blank page or photo): nothing leaves the machine
 
 
 @dataclass
@@ -162,16 +165,18 @@ def _run(
                     **common,
                 )
             else:
-                if not ocr.has_boxes:
-                    raise PipelineError(ErrorClass.OCR_EMPTY)
-                with tel.stage_span("vision", used_vision_fallback=True):
-                    redacted = redact_for_vision(images, ocr)
-                tel.record_fallback()
-                prepared = PreparedRequest(route=Route.VISION, redacted_images=redacted, **common)
+                readable = readable_pages(ocr, settings)
+                if readable:
+                    with tel.stage_span("vision", used_vision_fallback=True):
+                        redacted = redact_for_vision(images, ocr, only_pages=readable)
+                    tel.record_fallback()
+                    prepared = PreparedRequest(route=Route.VISION, redacted_images=redacted, **common)
+                else:
+                    prepared = PreparedRequest(route=Route.MANUAL, **common)
             timings["pii"] = _ms(start)
             prepared.timings_ms = timings
 
-            llm_result = _call_llm(prepared, settings, transport) if with_llm else None
+            llm_result = _call_llm(prepared, settings, transport) if with_llm and prepared.route is not Route.MANUAL else None
             outcome = _Outcome(prepared=prepared, llm=llm_result)
 
             if with_rules and llm_result is not None:
@@ -185,6 +190,12 @@ def _run(
                     outcome.check = decide(llm_result.output, text_ocr, settings)
                     span.set(check_status=outcome.check.status.value)
                 timings["rule"] = _ms(start)
+                tel.record_check(outcome.check.status.value)
+                req.set(check_status=outcome.check.status.value)
+
+            if with_rules and prepared.route is Route.MANUAL:
+                outcome.fields = LearnSphereFields()
+                outcome.check = Check(status=CheckStatus.NEEDS_REVIEW, reason=REASONS["no_text"])
                 tel.record_check(outcome.check.status.value)
                 req.set(check_status=outcome.check.status.value)
 
@@ -227,7 +238,8 @@ def process(
     """Local stages plus the single LLM call on masked input. Raises PipelineError."""
     out = _run(data, settings, with_llm=True, transport=transport)
     prepared, result = out.prepared, out.llm
-    assert result is not None
+    if result is None:  # no readable text: the hosted model was not called
+        raise PipelineError(ErrorClass.OCR_EMPTY)
     return ProcessedRequest(
         prepared=prepared,
         llm=result.output,
@@ -290,11 +302,11 @@ def extract(
     Raises PipelineError (generic client message) on failure.
     """
     out = _run(data, settings, with_llm=True, transport=transport, with_rules=True)
-    assert out.llm is not None and out.fields is not None and out.check is not None
+    assert out.fields is not None and out.check is not None
     prepared = out.prepared
     return ExtractResponse(
         request_id=prepared.request_id,
-        document_type=out.llm.output.document_type,
+        document_type=out.llm.output.document_type if out.llm else DocumentType.OTHER,
         fields=out.fields,
         check=out.check,
         pii=PiiSummary(masked_before_llm=True, entity_counts=prepared.entity_counts),

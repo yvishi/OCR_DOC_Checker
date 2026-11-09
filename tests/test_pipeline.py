@@ -323,25 +323,38 @@ def _decode(data_url: str):
     return np.array(Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))))
 
 
+def _assert_manual_review(resp, bodies):
+    assert bodies == [], "an image without readable text reached the hosted model"
+    assert resp.check.status.value == "Needs review" and resp.document_type.value == "other"
+    assert not any(resp.fields.model_dump().values()) and not resp.pipeline.used_vision_fallback
+
+
 @pytest.mark.parametrize("make", [_blank_png, _blank_pdf], ids=["blank_png", "blank_pdf"])
-def test_no_ocr_boxes_is_manual_review_error_without_llm_call(otel, settings, make):
-    """The brief: "If OCR found no boxes, you cannot redact... return a manual-review error"."""
+def test_blank_upload_needs_review_without_llm_call(otel, settings, make):
     from app.pipeline import extract
 
     transport, bodies = _canned_llm()
     llm_settings = _llm_settings(settings)
-    with pytest.raises(PipelineError) as info:
-        extract(make(), llm_settings, transport)
-    assert info.value.error_class is ErrorClass.OCR_EMPTY
-    assert str(info.value) == GENERIC_MESSAGE
-    assert bodies == [], "the hosted model was called without a redacted image"
+    _assert_manual_review(extract(make(), llm_settings, transport), bodies)
     assert not any(llm_settings.upload_dir.glob("*")), "an upload was left on disk"
     summary = tel.last_request_summary()
-    assert summary["error_class"] == "ocr_empty" and summary["outcome"] == "error"
+    assert summary["check_status"] == "Needs review" and summary["outcome"] == "success"
 
 
-def test_no_text_photo_never_reaches_the_llm(otel, settings, monkeypatch):
-    """OCR stubbed to zero words: Tesseract can read junk from some real photos, see the weak route."""
+def test_photo_with_only_junk_ocr_words_never_reaches_the_llm(otel, settings):
+    """Real OCR on the holiday-photo sample, which Tesseract reads as a pile of low-confidence junk."""
+    from app.ocr.tesseract import run_ocr_with_images
+    from app.pipeline import extract
+    from app.upload import store_upload
+
+    data = (DATA / "samples" / "dev" / "dev_029_other.jpg").read_bytes()
+    ocr, _ = run_ocr_with_images(store_upload(data, settings), settings)
+    assert ocr.has_boxes, "fixture must be a photo where OCR invents words"
+    transport, bodies = _canned_llm()
+    _assert_manual_review(extract(data, _llm_settings(settings), transport), bodies)
+
+
+def test_no_word_photo_never_reaches_the_llm(otel, settings, monkeypatch):
     import numpy as np
 
     from app import pipeline
@@ -351,10 +364,28 @@ def test_no_text_photo_never_reaches_the_llm(otel, settings, monkeypatch):
     photo = np.random.default_rng(1).integers(0, 255, (600, 800, 3), dtype=np.uint8)
     monkeypatch.setattr(pipeline, "run_ocr_with_images", lambda *_: (empty, [photo]))
     transport, bodies = _canned_llm()
-    with pytest.raises(PipelineError) as info:
-        pipeline.extract(_blank_png(), _llm_settings(settings), transport)
-    assert info.value.error_class is ErrorClass.OCR_EMPTY
-    assert bodies == []
+    _assert_manual_review(pipeline.extract(_blank_png(), _llm_settings(settings), transport), bodies)
+
+
+def test_vision_route_omits_a_photo_page_with_only_junk_words(otel, settings, monkeypatch):
+    import numpy as np
+
+    from app import pipeline
+    from app.pii.masker import build_text_with_offsets
+    from app.schemas import OcrPage, OcrResult, OcrWord
+
+    def word(text, conf, page):
+        return OcrWord(text=text, conf=conf, left=10, top=10, width=40, height=20, page=page)
+
+    words = [word(t, 90.0, 0) for t in ("Marks", "Board", "Exam")] + [word("eee", 30.0, 1), word("ot", 95.0, 1)]
+    pages = [OcrPage(page=i, width=800, height=600) for i in (0, 1)]
+    text, _ = build_text_with_offsets(words)
+    weak = OcrResult(words=words, text=text, pages=pages, mean_conf=50.0, char_count=14)
+    images = [np.full((600, 800, 3), 255, dtype=np.uint8), np.zeros((600, 800, 3), dtype=np.uint8)]
+    monkeypatch.setattr(pipeline, "run_ocr_with_images", lambda *_: (weak, images))
+    transport, bodies = _canned_llm()
+    resp = pipeline.extract(_blank_png(), _llm_settings(settings), transport)
+    assert resp.pipeline.used_vision_fallback and len(_sent_images(bodies[0])) == 1
 
 
 @pytest.mark.parametrize(

@@ -24,7 +24,7 @@ import httpx
 
 from app import telemetry as tel
 from app.config import Settings
-from app.errors import ErrorClass, PipelineError
+from app.errors import PipelineError
 from app.pipeline import extract
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,8 +39,6 @@ NUMERIC_FIELDS = ("passing_year", "percentage")
 FIELDS = TEXT_FIELDS + NUMERIC_FIELDS
 NUMERIC_TOLERANCE = 0.005
 NO_VARIANT = "(none)"
-# The brief's outcome when OCR finds no boxes: nothing can be redacted, so it is a manual-review error.
-UNREADABLE_STATUS = "Could not read"
 
 
 @dataclass
@@ -128,11 +126,6 @@ def evaluate_row(
     try:
         response = extract(Path(row["path"]).read_bytes(), settings, transport)
     except PipelineError as exc:
-        if exc.error_class is ErrorClass.OCR_EMPTY:
-            result.actual_type = "other"
-            result.actual_status = UNREADABLE_STATUS
-            result.field_misses = [name for name in scored if (row[name] or "").strip()]
-            return result
         result.error = exc.error_class.value
     except Exception as exc:  # the class name only: exception text can carry document content
         result.error = type(exc).__name__

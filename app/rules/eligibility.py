@@ -17,6 +17,7 @@ REASONS = {
     "cgpa": "Only CGPA is shown. CGPA is never converted to a percentage.",
     "other_metric": "The result is not given as a percentage (such as percentile, GPA or grades) and is never converted.",
     "unlabeled": "The extracted figure is not labeled as a percentage on the document.",
+    "no_text": "No readable text was found, so this image was not sent to the AI model. Check it manually.",
     "missing": "The percentage is missing or unreadable.",
     "ungrounded": "The extracted percentage could not be matched to the document text.",
     "low_conf": "The percentage was read with low OCR confidence (possibly covered by a stamp).",
