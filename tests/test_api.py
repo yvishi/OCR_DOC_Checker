@@ -172,6 +172,22 @@ def test_every_error_class_has_a_status():
     assert main.STATUS_BY_ERROR_CLASS[ErrorClass.SCHEMA_INVALID] == 502
 
 
+def test_blank_page_is_422_generic_through_the_real_pipeline(client, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    def no_llm(*_args, **_kwargs):
+        raise AssertionError("the hosted model must not be called without word boxes")
+
+    monkeypatch.setattr(main.pipeline, "_call_llm", no_llm)
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), "white").save(buf, "PNG")
+    resp = _post(client, buf.getvalue())
+    assert resp.status_code == 422
+    _assert_generic(resp)
+
+
 def test_unexpected_exception_is_500_generic(client, monkeypatch):
     leaky = RuntimeError("Aisha Rahman CBSE24-104482 ocr_failed")
     monkeypatch.setattr(main.pipeline, "extract", FakeExtract(exc=leaky))

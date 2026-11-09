@@ -233,3 +233,173 @@ def test_extract_restores_identity_and_decides(otel, settings):
     assert resp.pii.masked_before_llm and resp.pii.entity_counts.get("PERSON")
     body = resp.model_dump_json()
     assert "<PERSON_" not in body and "<ROLL_NUMBER_" not in body  # placeholders never reach the client
+
+
+# ---------- no text / weak text routes (mocked transport: no network) ----------
+
+
+def _png_bytes(im) -> bytes:
+    import io
+
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _blank_png() -> bytes:
+    from PIL import Image
+
+    return _png_bytes(Image.new("RGB", (1600, 1000), "white"))
+
+
+def _blank_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page()
+    return doc.tobytes()
+
+
+def _weak_scan() -> bytes:
+    """A readable name and nothing else: under the 40-character text gate, with word boxes."""
+    from PIL import Image, ImageDraw
+
+    from tests.test_ocr import _font
+
+    im = Image.new("RGB", (1600, 1000), "white")
+    ImageDraw.Draw(im).text((100, 100), "Name: Ravi Menon", fill="black", font=_font(56))
+    return _png_bytes(im)
+
+
+def _weak_then_blank_pdf() -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    doc.new_page().insert_text((72, 100), "Name: Ravi Menon", fontsize=22)
+    doc.new_page()
+    return doc.tobytes()
+
+
+def _canned_llm(doc_type: str = "other", percentage: float | None = None):
+    """Settings plus a mock transport that records every outbound request body."""
+    import json
+
+    import httpx
+
+    printed = f"{percentage:.2f}%" if percentage is not None else None
+    canned = {
+        "document_type": doc_type,
+        "fields": {"student_name": None, "roll_number": None, "board_or_school": None, "passing_year": None, "percentage": percentage},
+        "percentage_as_printed": printed,
+        "cgpa_only": False,
+    }
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(canned)}}], "usage": {}})
+
+    return httpx.MockTransport(handler), bodies
+
+
+def _llm_settings(settings: Settings) -> Settings:
+    from pydantic import SecretStr
+
+    return settings.model_copy(update={"llm_api_key": SecretStr("k"), "llm_model": "test-model"})
+
+
+def _sent_images(body: dict) -> list[str]:
+    content = body["messages"][-1]["content"]
+    return [part["image_url"]["url"] for part in content if part.get("type") == "image_url"]
+
+
+def _decode(data_url: str):
+    import base64
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    return np.array(Image.open(io.BytesIO(base64.b64decode(data_url.split(",", 1)[1]))))
+
+
+@pytest.mark.parametrize("make", [_blank_png, _blank_pdf], ids=["blank_png", "blank_pdf"])
+def test_no_ocr_boxes_is_manual_review_error_without_llm_call(otel, settings, make):
+    """The brief: "If OCR found no boxes, you cannot redact... return a manual-review error"."""
+    from app.pipeline import extract
+
+    transport, bodies = _canned_llm()
+    llm_settings = _llm_settings(settings)
+    with pytest.raises(PipelineError) as info:
+        extract(make(), llm_settings, transport)
+    assert info.value.error_class is ErrorClass.OCR_EMPTY
+    assert str(info.value) == GENERIC_MESSAGE
+    assert bodies == [], "the hosted model was called without a redacted image"
+    assert not any(llm_settings.upload_dir.glob("*")), "an upload was left on disk"
+    summary = tel.last_request_summary()
+    assert summary["error_class"] == "ocr_empty" and summary["outcome"] == "error"
+
+
+def test_no_text_photo_never_reaches_the_llm(otel, settings, monkeypatch):
+    """OCR stubbed to zero words: Tesseract can read junk from some real photos, see the weak route."""
+    import numpy as np
+
+    from app import pipeline
+    from app.schemas import OcrPage, OcrResult
+
+    empty = OcrResult(words=[], text="", pages=[OcrPage(page=0, width=800, height=600)], mean_conf=0.0, char_count=0)
+    photo = np.random.default_rng(1).integers(0, 255, (600, 800, 3), dtype=np.uint8)
+    monkeypatch.setattr(pipeline, "run_ocr_with_images", lambda *_: (empty, [photo]))
+    transport, bodies = _canned_llm()
+    with pytest.raises(PipelineError) as info:
+        pipeline.extract(_blank_png(), _llm_settings(settings), transport)
+    assert info.value.error_class is ErrorClass.OCR_EMPTY
+    assert bodies == []
+
+
+@pytest.mark.parametrize(
+    "doc_type,percentage,status",
+    [
+        ("mark_sheet", 76.4, "Needs review"),
+        ("student_id_card", None, "Not applicable"),
+        ("fee_receipt", None, "Not applicable"),
+        ("other", None, "Rejected"),
+    ],
+)
+def test_weak_scan_takes_redacted_vision_route(otel, settings, doc_type, percentage, status):
+    from app.ocr.tesseract import passes_text_gate, run_ocr_with_images
+    from app.pipeline import extract
+    from app.upload import store_upload
+
+    data = _weak_scan()
+    ocr, _ = run_ocr_with_images(store_upload(data, settings), settings)
+    assert ocr.has_boxes and not passes_text_gate(ocr, settings), "fixture must be a weak scan"
+
+    transport, bodies = _canned_llm(doc_type, percentage)
+    resp = extract(data, _llm_settings(settings), transport)
+    assert len(bodies) == 1, "expected exactly one LLM call"
+    assert resp.pipeline.used_vision_fallback and resp.check.status.value == status
+    assert resp.document_type.value == doc_type
+
+    images = _sent_images(bodies[0])
+    assert len(images) == 1
+    assert "ravi" not in str(bodies[0]).lower() and "menon" not in str(bodies[0]).lower()
+    sent = _decode(images[0])
+    for word in (w for w in ocr.words if w.text in ("Ravi", "Menon")):
+        assert (sent[word.top : word.top + word.height, word.left : word.left + word.width] == 0).all(), word.text
+
+
+def test_vision_route_omits_pages_without_boxes(otel, settings):
+    """A page OCR found nothing on cannot be redacted, so it must not leave the machine."""
+    from app.ocr.tesseract import run_ocr_with_images
+    from app.pipeline import extract
+    from app.upload import store_upload
+
+    data = _weak_then_blank_pdf()
+    ocr, images = run_ocr_with_images(store_upload(data, settings), settings)
+    assert len(images) == 2 and {w.page for w in ocr.words} == {0}, "fixture must have one page without boxes"
+
+    transport, bodies = _canned_llm()
+    resp = extract(data, _llm_settings(settings), transport)
+    assert resp.pipeline.used_vision_fallback
+    assert len(_sent_images(bodies[0])) == 1
