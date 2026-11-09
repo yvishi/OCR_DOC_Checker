@@ -125,3 +125,13 @@ def run_ocr(upload: StoredUpload, settings: Settings | None = None) -> OcrResult
 def passes_text_gate(result: OcrResult, settings: Settings | None = None) -> bool:
     settings = settings or get_settings()
     return result.char_count >= settings.ocr_min_chars and result.mean_conf >= settings.ocr_min_mean_conf
+
+
+def readable_pages(result: OcrResult, settings: Settings | None = None) -> set[int]:
+    """Pages with real words on them. Tesseract reads junk from photos, so a box alone proves nothing."""
+    settings = settings or get_settings()
+    counts: dict[int, int] = {}
+    for word in result.words:
+        if word.conf >= settings.ocr_readable_word_conf and sum(c.isalnum() for c in word.text) >= 3:
+            counts[word.page] = counts.get(word.page, 0) + 1
+    return {page for page, n in counts.items() if n >= settings.ocr_min_readable_words}

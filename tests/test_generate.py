@@ -72,7 +72,7 @@ def test_set_sizes_types_and_statuses():
     assert len(test_rows) == 20
     assert len(dev_rows) == 29
     for rows in (test_rows, dev_rows):
-        assert {r["expected_status"] for r in rows} - {"Could not read"} == STATUSES
+        assert {r["expected_status"] for r in rows} == STATUSES
         assert {r["true_type"] for r in rows} == {t.value for t in DocumentType}
         exts = {r["filename"].rsplit(".", 1)[1] for r in rows}
         assert "pdf" in exts and exts & {"png", "jpg"}
@@ -87,7 +87,7 @@ def test_status_rules():
             if p.doc_type in ("student_id_card", "fee_receipt"):
                 assert r["expected_status"] == "Not applicable"
             elif p.doc_type == "other":
-                assert r["expected_status"] == ("Could not read" if p.variant == "blank_page" else "Rejected")
+                assert r["expected_status"] == ("Needs review" if p.variant in TEXTLESS else "Rejected")
                 assert r["student_name"] == r["percentage"] == ""
             elif p.variant in ("stamp_over_total", "subject_mismatch") or p.variant in NO_PERCENTAGE:
                 assert r["expected_status"] == "Needs review"

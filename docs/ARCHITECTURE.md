@@ -40,9 +40,9 @@ flowchart TD
     E --> F["Tesseract image_to_data: words, confidence, boxes"]
     F --> G{"Fewer than 40 letters/digits or mean confidence below 60?"}
     G -- no --> H["Presidio mask: stable placeholders such as #lt;PERSON_1#gt;"]
-    G -- yes --> V{"Word boxes found?"}
+    G -- yes --> V{"At least 3 readable words on a page?"}
     V -- yes --> V1["Paint out PII boxes with padding: redacted-image vision fallback"]
-    V -- no --> X2["Manual-review error"]
+    V -- no --> X2["Needs review; nothing sent to the LLM"]
     subgraph NET["Network boundary: the only outbound call"]
         I["Single LLM call: classify + extract (masked text or redacted image only)"]
     end
@@ -153,7 +153,7 @@ sequenceDiagram
 - OCR and Presidio run locally. The LLM call happens only after masking, on a plan that doesn't train on prompts. Every OpenRouter request sets `provider.data_collection = "deny"`, so it is only routed to providers that don't store or train on prompts.
 - Custom recognizers cover Aadhaar, PAN, Indian mobile numbers, bank accounts, policy numbers, roll numbers, date of birth, email, parent names and addresses.
 - Placeholders are stable within a request. Values are normalized for case and whitespace first, so `RAVI MENON` and `Ravi Menon` get the same token. The map is kept in memory only and cleared in `finally`.
-- The vision fallback sends only a redacted image. If OCR found no boxes, the hosted model is never called.
+- The vision fallback sends only a redacted image. A page counts only with at least 3 words of 3 or more letters or digits at confidence 60 or above, because Tesseract invents low-confidence words on photos. An image with no such page is never sent to the hosted model and comes back as Needs review.
 - Uploads are checked by magic bytes, capped at 10 MB, stored under a UUID and deleted when the request ends.
 - Clients see only `Could not read this document`. Logs record only an error class.
 - The API key is read from env. `.env.example` is committed empty and `.env` is git-ignored.

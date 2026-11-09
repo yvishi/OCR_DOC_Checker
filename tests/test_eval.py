@@ -266,23 +266,3 @@ def test_real_pipeline_with_injected_transport(tmp_path, otel, capsys):
     assert len(calls) == 1
     out = capsys.readouterr().out
     assert "Status 1/1 (100.0%)" in out and "Document type 1/1" in out and "Field match 5/5" in out
-
-
-def test_empty_ocr_scores_as_could_not_read(tmp_path, monkeypatch):
-    from app.errors import ErrorClass, PipelineError
-    from eval import evaluate as ev
-
-    def no_boxes(*_args, **_kwargs):
-        raise PipelineError(ErrorClass.OCR_EMPTY)
-
-    monkeypatch.setattr(ev, "extract", no_boxes)
-    sample = tmp_path / "blank.png"
-    sample.write_bytes(b"x")
-    row = {
-        "filename": "blank.png", "path": str(sample), "true_type": "other", "variant": "blank_page",
-        "expected_status": "Could not read", "student_name": "", "percentage": "",
-    }
-    result = ev.evaluate_row(row)
-    assert result.status_ok and result.type_ok and not result.is_miss
-    row["expected_status"] = "Eligible"
-    assert not ev.evaluate_row(row).status_ok

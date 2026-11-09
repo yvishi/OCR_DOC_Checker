@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import numpy as np
 
@@ -32,16 +32,20 @@ def redact_boxes(img: np.ndarray, words: Sequence[OcrWord], pad: int = 6) -> np.
     return out
 
 
-def redact_for_vision(page_images: Sequence[np.ndarray], ocr: OcrResult, pad: int = 6) -> list[np.ndarray]:
+def redact_for_vision(
+    page_images: Sequence[np.ndarray], ocr: OcrResult, pad: int = 6, only_pages: Collection[int] | None = None
+) -> list[np.ndarray]:
     """Redacted copies of ``page_images`` (index == ``OcrWord.page``), PII boxes blacked out.
 
     Without word boxes we cannot know where the PII is, so the hosted model must not be called:
     raise ``OCR_EMPTY`` (manual review). The same holds per page: a page with no word boxes
-    cannot be redacted, so it is left out of the returned list.
+    cannot be redacted, so it is left out of the returned list. ``only_pages`` narrows that further.
     """
     if not ocr.has_boxes:
         raise PipelineError(ErrorClass.OCR_EMPTY)
     pages_with_boxes = {word.page for word in ocr.words}
+    if only_pages is not None:
+        pages_with_boxes &= set(only_pages)
     pii_words = find_pii_words(ocr)
     by_page: dict[int, list[OcrWord]] = {}
     for word in pii_words:
