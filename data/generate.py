@@ -1,7 +1,8 @@
 """Synthetic admission-document generator for OCR_DOC_Checker.
 
 Every document produced here is SYNTHETIC: names, numbers and institutions come from Faker
-(en_IN) or random digits, and every page carries a small "SPECIMEN / SYNTHETIC" marking.
+(en_IN) or random digits, and every page carries a small "SPECIMEN / SYNTHETIC" marking
+(except the blank_page and holiday_photo rejects, which must carry no text at all).
 LearnSphere College and Sahyadri Valley Public School are fictional. Board headers (CBSE,
 MSBSHSE, CISCE) are used only as layout flavour on clearly marked specimens.
 
@@ -11,7 +12,7 @@ Run from the repo root:
     .venv/bin/python -m data.generate --set test --only 1,7
 
 Outputs:
-    <out>/dev/dev_NNN_<type>.<ext>      tuning set (20 docs)
+    <out>/dev/dev_NNN_<type>.<ext>      tuning set (29 docs)
     <out>/test/test_NNN_<type>.<ext>    held-back set (exactly 20 docs)
     <csv-dir>/dev_set.csv, <csv-dir>/test_set.csv
 
@@ -28,11 +29,13 @@ Expected-status policy (docs/ARCHITECTURE.md section 4):
   * stamp_over_total (stamp corrupts the total/percentage pixels), cgpa_only (no percentage
     printed; CGPA is never converted) and subject_mismatch (subject sum disagrees with the
     printed percentage by more than 0.5) -> Needs review.
+  * missing_total (no total or percentage printed), percentile_only (overall result is only a
+    percentile) and grades_only (letter grades only) -> Needs review; no percentage is printed.
   * rotated_90 / rotated_180 / noisy sheets keep their true rule result: the value is still
     printed clearly, the pipeline is expected to fix rotation and cope with mild noise.
   * student_id_card / fee_receipt -> Not applicable.  other -> Rejected.
 
-CSV `percentage` is the printed percentage (empty for CGPA-only and non-mark-sheets).
+CSV `percentage` is the printed percentage (empty when none is printed and for non-mark-sheets).
 `pii_values` is a `|`-separated list of every PII string exactly as printed on the document.
 """
 
@@ -446,8 +449,8 @@ SPECS: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {
         ("other", "grocery_bill", "jpg", {"kind": "grocery_bill"}),
     ],
     "dev": [
-        ("mark_sheet", "clean", "png", {"board": "MSBSHSE", "pct": 84.33, "maxes": [100] * 6}),
-        ("mark_sheet", "clean", "jpg", {"board": "CBSE", "pct": 41.6}),
+        ("mark_sheet", "clean", "png", {"board": "MSBSHSE", "pct": 91.0, "maxes": [100] * 6}),
+        ("mark_sheet", "clean", "jpg", {"board": "CBSE", "pct": 40.0}),
         ("mark_sheet", "boundary_60", "pdf", {"board": "MSBSHSE", "pct": 60.0, "pages": 2}),
         ("mark_sheet", "boundary_59_9", "png", {"board": "CISCE", "pct": 59.9}),
         ("mark_sheet", "near_cutoff", "jpg", {"board": "CBSE", "pct": 58.4}),
@@ -455,7 +458,7 @@ SPECS: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {
         ("mark_sheet", "stamp_over_total", "png", {"board": "MSBSHSE", "pct": 64.2, "stamp": "blue"}),
         ("mark_sheet", "cgpa_only", "pdf", {"board": "CBSE", "cgpa": 7.4}),
         ("mark_sheet", "rotated_90", "jpg", {"board": "CBSE", "pct": 55.0, "rotate": 90}),
-        ("mark_sheet", "rotated_180", "png", {"board": "SVPS", "pct": 70.6, "rotate": 180}),
+        ("mark_sheet", "rotated_180", "png", {"board": "SVPS", "pct": 74.0, "rotate": 180}),
         ("mark_sheet", "subject_mismatch", "png", {"board": "CBSE", "pct": 71.0, "subject_pct": 68.4}),
         ("mark_sheet", "noisy", "pdf", {"board": "CISCE", "pct": 88.8}),
         ("student_id_card", "clean", "png", {"issuer": "college"}),
@@ -466,6 +469,15 @@ SPECS: dict[str, list[tuple[str, str, str, dict[str, Any]]]] = {
         ("fee_receipt", "clean", "jpg", {"mode": "Cash"}),
         ("other", "letter_mentions_percentage", "png", {"kind": "recommendation"}),
         ("other", "grocery_bill", "pdf", {"kind": "grocery_bill"}),
+        ("student_id_card", "clean", "pdf", {"issuer": "college"}),
+        ("student_id_card", "clean", "jpg", {"issuer": "school"}),
+        ("fee_receipt", "clean", "png", {"mode": "NEFT"}),
+        ("fee_receipt", "clean", "jpg", {"mode": "UPI"}),
+        ("mark_sheet", "missing_total", "png", {"board": "MSBSHSE", "result": "missing_total", "subject_total": 342}),
+        ("mark_sheet", "percentile_only", "pdf", {"board": "CBSE", "result": "percentile", "percentile": 87.35}),
+        ("mark_sheet", "grades_only", "jpg", {"board": "CISCE", "result": "grades", "points": 7.6}),
+        ("other", "blank_page", "png", {"kind": "blank_page"}),
+        ("other", "holiday_photo", "jpg", {"kind": "holiday_photo"}),
     ],
 }
 
@@ -498,13 +510,28 @@ def _plan_mark_sheet(plan: DocPlan, fk: Faker, rng: random.Random, p: dict[str, 
         "board": board_key, "year": year, "person": person, "roll": roll, "school": school,
         "aadhaar": aad, "issue_date": date(year, 5, rng.randint(10, 28)),
         "pages": p.get("pages", 1), "stamp": p.get("stamp"), "rotate": p.get("rotate", 0),
-        "noisy": plan.variant == "noisy", "cgpa": p.get("cgpa"),
+        "noisy": plan.variant == "noisy", "cgpa": p.get("cgpa"), "result": p.get("result"),
     }
     if p.get("cgpa") is not None:
         n = 5
         subj = board["subjects"][:n]
         pts = cgpa_points(p["cgpa"], n, rng)
         d["subjects"] = [(c, s, None, None, GRADE_POINTS[g], g) for (c, s), g in zip(subj, pts)]
+        pct = None
+        status = "Needs review"
+    elif p.get("result") == "missing_total":
+        maxes = [100] * 5
+        marks = split_marks(p["subject_total"], maxes, rng)
+        subj = board["subjects"][: len(maxes)]
+        d["subjects"] = [(c, s, mx, mk, grade_for(mk, mx), None) for (c, s), mx, mk in zip(subj, maxes, marks)]
+        pct = None
+        status = "Needs review"
+    elif p.get("result") in ("percentile", "grades"):
+        n = 5
+        subj = board["subjects"][:n]
+        pts = cgpa_points(p.get("points", 8.0), n, rng)
+        d["subjects"] = [(c, s, None, None, GRADE_POINTS[g], None) for (c, s), g in zip(subj, pts)]
+        d["percentile"] = p.get("percentile")
         pct = None
         status = "Needs review"
     else:
@@ -615,8 +642,17 @@ def _plan_fee_receipt(plan: DocPlan, fk: Faker, rng: random.Random, p: dict[str,
     )
 
 
+TEXTLESS_KINDS = ("blank_page", "holiday_photo")
+
+
 def _plan_other(plan: DocPlan, fk: Faker, rng: random.Random, p: dict[str, Any]) -> None:
     kind = p["kind"]
+    if kind in TEXTLESS_KINDS:
+        plan.data = {"kind": kind}
+        # No OCR boxes means nothing can be redacted, so a blank page ends in the manual-review error.
+        status = "Could not read" if kind == "blank_page" else "Rejected"
+        plan.row = _row(plan, expected_status=status, pii_values=[])
+        return
     person = make_person(fk, rng, rng.randint(1965, 1995))
     ph = phone(rng)
     addr = address(fk)
@@ -726,8 +762,12 @@ def render_mark_sheet(plan: DocPlan) -> list[Image.Image]:
 
     # Subject table
     cgpa = d["cgpa"] is not None
+    result = d["result"]
+    grades_table = result in ("percentile", "grades")
     if cgpa:
         cols = [("Code", 140), ("Subject", 300), ("Grade", 1050), ("Grade Point", 1260)]
+    elif grades_table:
+        cols = [("Code", 140), ("Subject", 300), ("Grade", 1050)]
     else:
         cols = [("Code", 140), ("Subject", 300), ("Max Marks", 900), ("Marks Obtained", 1110), ("Grade", 1400)]
     top = y
@@ -739,6 +779,8 @@ def render_mark_sheet(plan: DocPlan) -> list[Image.Image]:
     for code, subj, mx, mk, grade, gp in d["subjects"]:
         if cgpa:
             vals = [code, subj, grade, str(gp)]
+        elif grades_table:
+            vals = [code, subj, grade]
         else:
             vals = [code, subj, str(mx), f"{mk:03d}" if d["board"] == "CBSE" else str(mk), grade]
         for (name, x), v in zip(cols, vals):
@@ -756,6 +798,12 @@ def render_mark_sheet(plan: DocPlan) -> list[Image.Image]:
         y += 70
         c.text((140, y), "Result: PASS", 36, "bold")
         y += 60
+    elif result in ("missing_total", "percentile", "grades"):
+        if result == "percentile":
+            c.label_value(140, y, "Percentile:", f"{d['percentile']:.2f}", 40, label_w=400)
+            y += 70
+        c.text((140, y), "Result: PASS", 36, "bold")
+        y += 60
     else:
         value_boxes.append(c.label_value(140, y, "Grand Total:", f"{d['total']} / {d['max_total']}", 40, label_w=400))
         y += 70
@@ -770,7 +818,10 @@ def render_mark_sheet(plan: DocPlan) -> list[Image.Image]:
     c.text((140, fy + 50), f"Place: {board['place']}", 30)
     c.line((W - 560, fy + 60, W - 140, fy + 60), INK, 2)
     c.text((W - 350, fy + 75), "Controller of Examinations", 28, anchor="ma")
-    c.text((140, H - 180), "This statement is computer generated. Marks are out of the maximum shown.", 24, fill=GREY)
+    note = "This statement is computer generated."
+    if not grades_table:
+        note += " Marks are out of the maximum shown."
+    c.text((140, H - 180), note, 24, fill=GREY)
     c.specimen()
 
     img = c.img
@@ -954,10 +1005,50 @@ def render_fee_receipt(plan: DocPlan) -> list[Image.Image]:
     return [c.img]
 
 
+def render_holiday_photo(plan: DocPlan) -> Image.Image:
+    """A drawn beach scene with camera noise: picture-like, no people and no text."""
+    rng = random.Random(f"photo:{plan.filename}")
+    W, H = 1600, 1200
+    horizon, shore = int(H * 0.52), int(H * 0.72)
+    sky = np.linspace((70, 130, 215), (250, 205, 160), horizon)
+    sea = np.linspace((30, 120, 160), (90, 190, 190), shore - horizon)
+    sand = np.linspace((235, 210, 165), (195, 160, 115), H - shore)
+    column = np.concatenate([sky, sea, sand]).astype(np.uint8)
+    img = Image.fromarray(np.repeat(column[:, np.newaxis, :], W, axis=1))
+    d = ImageDraw.Draw(img)
+    d.ellipse((1120, 130, 1320, 330), fill=(255, 240, 190))
+    for _ in range(9):  # clouds
+        x, y = rng.randint(50, 1450), rng.randint(40, 330)
+        for _ in range(7):
+            dx, dy, r = rng.randint(-90, 90), rng.randint(-22, 22), rng.randint(28, 60)
+            d.ellipse((x + dx - r, y + dy - r, x + dx + r, y + dy + r), fill=(250, 250, 248))
+    for _ in range(70):  # wave crests
+        x, y = rng.randint(0, W - 200), rng.randint(horizon + 12, shore - 8)
+        d.arc((x, y, x + rng.randint(60, 200), y + 18), 200, 340, fill=(215, 240, 240), width=3)
+    for bx, by, h in ((240, 1010, 640), (430, 1060, 500)):  # palms
+        top = (bx + 130, by - h)
+        d.line(((bx, by), (bx + 40, by - h // 2), top), fill=(95, 65, 40), width=30, joint="curve")
+        for ang in range(0, 360, 40):
+            rad = math.radians(ang)
+            tip = (top[0] + int(250 * math.cos(rad)), top[1] + int(110 * math.sin(rad)) + 90)
+            mid = (top[0] + int(130 * math.cos(rad)), top[1] + int(70 * math.sin(rad)) - 25)
+            d.line((top, mid, tip), fill=(35, 115, 60), width=20, joint="curve")
+    d.pieslice((1000, 800, 1320, 1120), 180, 360, fill=(215, 60, 70))  # beach umbrella
+    d.line(((1160, 800), (1160, 1110)), fill=(240, 240, 235), width=10)
+    img = img.filter(ImageFilter.GaussianBlur(radius=1.2))
+    arr = np.asarray(img).astype(np.int16)
+    noise = np.random.default_rng(rng.randrange(2**32)).normal(0, 6, arr.shape).astype(np.int16)
+    return Image.fromarray(np.clip(arr + noise, 0, 255).astype(np.uint8))
+
+
 def render_other(plan: DocPlan) -> list[Image.Image]:
     d = plan.data
-    p: Person = d["person"]
     kind = d["kind"]
+    if kind == "blank_page":
+        return [Canvas(A4).img]
+    if kind == "holiday_photo":
+        return [render_holiday_photo(plan)]
+    p: Person = d["person"]
     if kind == "letter":
         c = Canvas(A4)
         W, _ = A4

@@ -11,6 +11,8 @@ from app.schemas import DocumentType
 from data import generate as gen
 
 STATUSES = {"Eligible", "Not eligible", "Needs review", "Not applicable", "Rejected"}
+NO_PERCENTAGE = {"cgpa_only", "missing_total", "percentile_only", "grades_only"}
+TEXTLESS = {"blank_page", "holiday_photo"}
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -68,9 +70,9 @@ def test_set_sizes_types_and_statuses():
     test_rows = [p.row for p in gen.plan_set("test")]
     dev_rows = [p.row for p in gen.plan_set("dev")]
     assert len(test_rows) == 20
-    assert 15 <= len(dev_rows) <= 25
+    assert len(dev_rows) == 29
     for rows in (test_rows, dev_rows):
-        assert {r["expected_status"] for r in rows} == STATUSES
+        assert {r["expected_status"] for r in rows} - {"Could not read"} == STATUSES
         assert {r["true_type"] for r in rows} == {t.value for t in DocumentType}
         exts = {r["filename"].rsplit(".", 1)[1] for r in rows}
         assert "pdf" in exts and exts & {"png", "jpg"}
@@ -85,14 +87,14 @@ def test_status_rules():
             if p.doc_type in ("student_id_card", "fee_receipt"):
                 assert r["expected_status"] == "Not applicable"
             elif p.doc_type == "other":
-                assert r["expected_status"] == "Rejected"
+                assert r["expected_status"] == ("Could not read" if p.variant == "blank_page" else "Rejected")
                 assert r["student_name"] == r["percentage"] == ""
-            elif p.variant in ("stamp_over_total", "cgpa_only", "subject_mismatch"):
+            elif p.variant in ("stamp_over_total", "subject_mismatch") or p.variant in NO_PERCENTAGE:
                 assert r["expected_status"] == "Needs review"
             else:
                 pct = float(r["percentage"])
                 assert r["expected_status"] == ("Eligible" if pct >= 60 else "Not eligible")
-            if p.variant == "cgpa_only":
+            if p.variant in NO_PERCENTAGE:
                 assert r["percentage"] == ""
             if p.variant == "boundary_60":
                 assert float(r["percentage"]) == 60.0 and r["expected_status"] == "Eligible"
@@ -108,10 +110,21 @@ def test_required_variants_present():
             "rotated_90", "rotated_180", "noisy", "subject_mismatch"} <= variants
 
 
+def test_brief_samples_present():
+    """The brief's named samples and per-type minimums, across dev and test."""
+    plans = gen.plan_set("dev") + gen.plan_set("test")
+    assert 30 <= len(plans) <= 50
+    assert {"missing_total", "percentile_only", "grades_only", "blank_page", "holiday_photo"} <= {p.variant for p in plans}
+    printed = {float(p.row["percentage"]) for p in plans if p.row["percentage"]}
+    assert {40.0, 59.9, 60.0, 74.0, 91.0} <= printed
+    for doc_type in ("student_id_card", "fee_receipt"):
+        assert sum(p.doc_type == doc_type for p in plans) >= 8
+
+
 def test_mark_arithmetic():
     for s in gen.SETS:
         for p in gen.plan_set(s):
-            if p.doc_type != "mark_sheet" or p.data["cgpa"] is not None:
+            if p.doc_type != "mark_sheet" or p.variant in NO_PERCENTAGE:
                 continue
             d = p.data
             maxes = [x[2] for x in d["subjects"]]
@@ -131,6 +144,9 @@ def test_filenames_and_pii():
     for s in gen.SETS:
         for p in gen.plan_set(s):
             r = p.row
+            if p.variant in TEXTLESS:
+                assert r["pii_values"] == ""
+                continue
             pii = r["pii_values"].split("|")
             assert pii and all(pii)
             if r["student_name"]:
