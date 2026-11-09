@@ -17,6 +17,25 @@ _PLACEHOLDER = re.compile(r"^<([A-Z_]+)_(\d+)>$")
 _ANY_PLACEHOLDER = re.compile(r"<[A-Z_]+_\d+>")
 _NUMBER = re.compile(r"\d{1,3}(?:\.\d{1,3})?")
 _TOTAL = re.compile(r"\btotal\b[^\n\d]{0,30}(\d{2,5})\s*/\s*(\d{2,5})\b", re.IGNORECASE)
+_PCT_LINE = re.compile(r"percent(?!ile)|%(?!\s*t?ile\b)", re.IGNORECASE)
+
+# What a figure on a line is labeled as. "other" is tried first so "percentile" is never a percentage.
+_LABEL = re.compile(
+    r"(?P<other>percentile|%\s*t?ile\b|\b[cso]?gpa\b|\bc\.\s?g\.\s?p\.\s?a\b|\bgrade\s*points?\b)"
+    r"|(?P<percentage>\bpercentage\b|\bper\s?cent\b|\bpct\b)",
+    re.IGNORECASE,
+)
+_PCT_FIELD = re.compile(r"\bpercentage\s*[:\-]", re.IGNORECASE)  # a field, not "33 percent" in the footnotes
+_RESULT_ONLY = re.compile(
+    r"\b(?:first|second|third|1st|2nd|3rd|pass)\s+(?:class|division)\b"
+    r"|\bdivision\s*[:\-]?\s*(?:first|second|third|1st|2nd|3rd|i{1,3}\b)"
+    r"|\b(?:overall|final|result)\s+grade\b",
+    re.IGNORECASE,
+)
+_GRADE_TABLE_HEAD = re.compile(r"\b(?:subject|code)\b.*\bgrade\b", re.IGNORECASE)
+# "<code> <SUBJECT NAME> <letter grade>" with no marks. OCR often drops the shaded table header.
+_GRADE_ROW = re.compile(r"^\s*\S{1,4}\s+[A-Za-z][A-Za-z &.\-]{1,40}?\s+[A-E][12+]?\s*$")
+_MIN_GRADE_ROWS = 3
 
 # Which placeholder types may fill which field. A <PARENT_NAME_1> is never the student's name.
 _ALLOWED = {"student_name": {"PERSON"}, "roll_number": {"ROLL_NUMBER"}}
@@ -59,6 +78,7 @@ class PercentageEvidence:
     total_matches: bool | None  # None when no readable "Total: X / Y" line exists
     total_pct: float | None
     stamp_over_figures: bool = False  # a stamp overlaps the percentage or total words
+    label: str | None = None  # what the document calls this figure: "percentage", "other" or None
 
 
 def _core(printed: str) -> str | None:
@@ -84,14 +104,54 @@ def percentage_evidence(llm: LLMOutput, ocr: OcrResult | None) -> PercentageEvid
     if core:
         # Words whose digits are exactly the number; prefer ones on a "percentage" line.
         hits = [w for w in ocr.words if _NUMBER.fullmatch(w.text.strip("%:;,()")) and w.text.strip("%:;,()") == core]
-        on_pct_line = [w for w in hits if re.search(r"percent|%", _line_of(ocr.words, w), re.IGNORECASE)]
+        on_pct_line = [w for w in hits if _PCT_LINE.search(_line_of(ocr.words, w))]
         chosen = on_pct_line or hits
         if chosen:
             min_conf = max(w.conf for w in chosen)  # best reading of the number; each is one word
     total_matches, total_pct = _total_check(ocr.text, pct)
     figure_words = list(chosen) if core and chosen else []
     figure_words += [w for w in ocr.words if re.search(r"total|percent", _line_of(ocr.words, w), re.IGNORECASE)]
-    return PercentageEvidence(grounded, min_conf, total_matches, total_pct, _stamped(figure_words, ocr))
+    label = figure_label(core, ocr.text) if core else None
+    return PercentageEvidence(grounded, min_conf, total_matches, total_pct, _stamped(figure_words, ocr), label)
+
+
+def _label_at(line: str, start: int, end: int) -> str | None:
+    """The nearest label before the figure, else a % sign or label right after it."""
+    before = list(_LABEL.finditer(line[:start]))
+    if before:
+        return before[-1].lastgroup
+    after = line[end:].lstrip(" :=-(")
+    following = _LABEL.match(after)
+    if following:
+        return following.lastgroup
+    return "percentage" if after.startswith("%") else None
+
+
+def figure_label(core: str, text: str) -> str | None:
+    """"percentage" if the figure is labeled as one anywhere; "other" if only as another metric."""
+    figure = re.compile(rf"(?<![\d.]){re.escape(core)}(?!\d|\.\d)")
+    found = None
+    for line in text.splitlines():
+        for m in figure.finditer(line):
+            kind = _label_at(line, m.start(), m.end())
+            if kind == "percentage":
+                return kind
+            found = kind or found
+    return found
+
+
+def non_percentage_metric_shown(text: str) -> bool:
+    """True when a sheet with no percentage field reports its result some other way."""
+    lines = text.splitlines()
+    if any(_PCT_FIELD.search(line) for line in lines):
+        return False
+    if any(m.lastgroup == "other" for line in lines for m in _LABEL.finditer(line)):
+        return True
+    if _RESULT_ONLY.search(text):
+        return True
+    if sum(1 for line in lines if _GRADE_ROW.match(line)) >= _MIN_GRADE_ROWS:
+        return True
+    return any(_GRADE_TABLE_HEAD.search(line) and "marks" not in line.lower() for line in lines)
 
 
 def _overlaps(w: OcrWord, box: tuple[int, int, int, int]) -> bool:

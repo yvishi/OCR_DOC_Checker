@@ -73,7 +73,7 @@ def test_valid_response_parsed(settings):
     assert result.output.fields.percentage == 76.4
     assert result.output.fields.student_name == "<PERSON_1>"
     assert (result.prompt_tokens, result.completion_tokens) == (120, 40)
-    assert result.prompt_version == "extract_v3"
+    assert result.prompt_version == "extract_v4"
 
 
 def test_request_shape_privacy_and_schema(settings):
