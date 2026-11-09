@@ -95,6 +95,25 @@ def test_null_fields_show_dash(monkeypatch):
     assert ">Needs review<" in _all_markdown(at)
 
 
+def test_subject_mismatch_shows_both_figures(monkeypatch):
+    body = json.loads(json.dumps(EXPECTED_JSON))
+    body["check"] = {
+        "status": "Needs review",
+        "reason": "The subject marks do not add up to the printed percentage.",
+        "printed_percentage": 66.0,
+        "recomputed_percentage": 63.2,
+    }
+    at = _run_with(monkeypatch, FakeHttp(body=body))
+    shown = {m.label: m.value for m in at.metric}
+    assert shown["Printed percentage"] == "66%"
+    assert shown["Recomputed from subjects"] == "63.2%"
+
+
+def test_figures_hidden_without_a_mismatch(monkeypatch):
+    at = _run_with(monkeypatch, FakeHttp())
+    assert "Printed percentage" not in {m.label for m in at.metric}
+
+
 def test_api_error_shows_generic_message(monkeypatch):
     at = _run_with(monkeypatch, FakeHttp(status=422, body={"error": "Could not read this document"}))
     assert [e.value for e in at.error] == ["Could not read this document"]

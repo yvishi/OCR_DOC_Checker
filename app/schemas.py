@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 
 class DocumentType(str, Enum):
@@ -135,9 +135,20 @@ class CheckStatus(str, Enum):
     REJECTED = "Rejected"
 
 
+_OPTIONAL_CHECK_FIGURES = frozenset({"printed_percentage", "recomputed_percentage"})
+
+
 class Check(BaseModel):
     status: CheckStatus
     reason: str  # never contains names, IDs or numbers that identify a student
+    # Set only when the subject recompute disagrees, so the officer can compare the two figures.
+    printed_percentage: float | None = None
+    recomputed_percentage: float | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_figures(self, handler):
+        data = handler(self)
+        return {k: v for k, v in data.items() if v is not None or k not in _OPTIONAL_CHECK_FIGURES}
 
 
 class PiiSummary(BaseModel):

@@ -271,6 +271,11 @@ def render_status(check: dict[str, Any]) -> None:
         f'<div class="ls-badge-reason">{reason}</div></div>',
         unsafe_allow_html=True,
     )
+    printed, recomputed = check.get("printed_percentage"), check.get("recomputed_percentage")
+    if printed is not None and recomputed is not None:
+        left, right = st.columns(2)
+        left.metric("Printed percentage", f"{printed:g}%")
+        right.metric("Recomputed from subjects", f"{recomputed:g}%")
 
 
 def render_fields(result: dict[str, Any]) -> None:

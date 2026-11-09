@@ -10,6 +10,7 @@ from app.rules import subjects
 from app.rules.eligibility import REASONS, decide
 from app.rules.guards import percentage_evidence, restore_fields
 from app.schemas import CheckStatus, DocumentType, LearnSphereFields, LLMOutput, OcrPage, OcrResult, OcrWord
+from app.telemetry import ALLOWED_KEYS
 
 S = Settings()
 
@@ -81,6 +82,83 @@ def test_cgpa_only_needs_review_and_is_never_converted():
     assert check.status is CheckStatus.NEEDS_REVIEW and check.reason == REASONS["cgpa"]
 
 
+@pytest.mark.parametrize(
+    "line,value,printed",
+    [
+        ("Percentile: 92.50", 92.5, "92.50"),
+        ("Percentile Rank: 92.50", 92.5, "92.50"),
+        ("Percentile: 92.50%", 92.5, "92.50%"),
+        ("Score: 92.50 %ile", 92.5, "92.50"),
+        ("CGPA: 8.2", 8.2, "8.2"),
+        ("SGPA: 8.20", 8.2, "8.20"),
+        ("GPA: 3.80", 3.8, "3.80"),
+        ("Grade Points: 9.1", 9.1, "9.1"),
+    ],
+)
+def test_other_metric_extracted_as_percentage_is_never_decided(line, value, printed):
+    check = decide(llm(value, printed), ocr_from_lines(["CENTRAL BOARD", line]), S)
+    assert check.status is CheckStatus.NEEDS_REVIEW and check.reason == REASONS["other_metric"]
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["Percentile: 92.50"],
+        ["SGPA: 8.20"],
+        ["GPA: 3.80"],
+        ["Code Subject Grade", "301 ENGLISH CORE A1", "041 MATHEMATICS B2"],
+        ["Code Subject Grade", "301 ENGLISH CORE A1", "Note: 33 percent to pass in each subject"],
+        ["ENG ENGLISH B1", "MAT MATHEMATICS C1", "PHY PHYSICS A2", "Result: PASS"],  # header lost by OCR
+        ["Result: First Division"],
+        ["Division: Second"],
+    ],
+)
+def test_other_metric_with_no_percentage_gets_its_own_reason(lines):
+    check = decide(llm(None, None), ocr_from_lines(["CENTRAL BOARD", *lines]), S)
+    assert check.status is CheckStatus.NEEDS_REVIEW and check.reason == REASONS["other_metric"]
+
+
+def test_marks_table_without_a_percentage_is_missing_not_other_metric():
+    lines = ["Code Subject Max Marks Marks Obtained Grade", "301 ENGLISH CORE 100 076 B1"]
+    assert decide(llm(None, None), ocr_from_lines(lines), S).reason == REASONS["missing"]
+
+
+def test_unreadable_percentage_next_to_cgpa_is_missing():
+    lines = ["CGPA: 8.2", "Percentage: ####"]
+    assert decide(llm(None, None), ocr_from_lines(lines), S).reason == REASONS["missing"]
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        ["CGPA: 8.2", "Grand Total: 382 / 500", "Percentage: 76.40%"],
+        ["CGPA: 8.2 Percentage: 76.40%", "Grand Total: 382 / 500"],
+        ["Percentile: 91.00", "Grand Total: 382 / 500", "Percentage: 76.40%"],
+    ],
+)
+def test_real_percentage_alongside_another_metric_is_decided_normally(lines):
+    assert status(llm(76.4, "76.40%"), ocr_from_lines(lines)) is CheckStatus.ELIGIBLE
+
+
+def test_percent_sign_after_the_figure_counts_as_a_label():
+    assert status(llm(76.4, "76.40%"), ocr_from_lines(["Overall Result: 76.40%"])) is CheckStatus.ELIGIBLE
+
+
+def test_figure_with_no_percentage_label_needs_review():
+    # A subject mark picked up as the percentage on a sheet that prints none.
+    ocr = ocr_from_lines(["301 ENGLISH CORE 100 82 B1"])
+    assert decide(llm(82.0, "82"), ocr, S).reason == REASONS["unlabeled"]
+
+
+def test_percentile_word_is_not_treated_as_the_percentage_line():
+    ocr = ocr_from_lines(["Percentile: 76.40", "Percentage: 76.40"], overrides={"76.40": 95.0})
+    assert percentage_evidence(llm(76.4, "76.40"), ocr).label == "percentage"
+
+
+def test_other_metric_on_vision_route_stays_needs_review():
+    assert decide(llm(92.5, "92.50"), None, S).reason == REASONS["vision"]
+
+
 def test_missing_percentage_needs_review():
     assert decide(llm(None, None), sheet(None), S).reason == REASONS["missing"]
 
@@ -117,7 +195,22 @@ def test_subject_recompute_disagreement_needs_review():
     rows = ["$1 ENGLISH 100 75 B1", "$2 MATHEMATICS 100 51 C1", "$3 PHYSICS 100 38 D", "$4 CHEMISTRY 100 62 B2", "$5 BIOLOGY 100 90 A2"]
     ocr = sheet("66.00%", "330 / 500", subject_rows=rows)
     assert subjects.recompute(ocr.text).percentage == 63.2
-    assert decide(llm(66.0, "66.00%"), ocr, S).reason == REASONS["subjects"]
+    check = decide(llm(66.0, "66.00%"), ocr, S)
+    assert check.reason == REASONS["subjects"]
+    assert (check.printed_percentage, check.recomputed_percentage) == (66.0, 63.2)
+    assert not any(ch.isdigit() for ch in check.reason)
+
+
+def test_subject_mismatch_near_cutoff_without_total_still_shows_both_figures():
+    rows = ["$1 ENGLISH 100 75 B1", "$2 MATHEMATICS 100 51 C1", "$3 PHYSICS 100 38 D", "$4 CHEMISTRY 100 62 B2", "$5 BIOLOGY 100 90 A2"]
+    check = decide(llm(61.0, "61.00%"), sheet("61.00%", subject_rows=rows), S)
+    assert check.reason == REASONS["subjects"] and check.recomputed_percentage == 63.2
+
+
+def test_check_omits_figures_when_absent_and_keeps_them_out_of_telemetry():
+    check = decide(llm(76.4, "76.40%"), sheet("76.40%", "382 / 500"), S)
+    assert set(check.model_dump()) == {"status", "reason"}
+    assert not {"printed_percentage", "recomputed_percentage"} & ALLOWED_KEYS
 
 
 def test_subject_recompute_agreeing_passes():

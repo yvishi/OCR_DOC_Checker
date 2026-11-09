@@ -7,7 +7,7 @@ strict JSON modes reject keywords such as minimum/maxLength.
 
 from __future__ import annotations
 
-PROMPT_VERSION = "extract_v3"
+PROMPT_VERSION = "extract_v4"
 
 SYSTEM_PROMPT = """\
 You read admission documents for LearnSphere College, an Indian college. You receive the OCR text \
@@ -35,8 +35,16 @@ of ONE document (or an image of it). Personal data has been replaced with placeh
    (e.g. "76.40%"), or null.
 
 Rules:
-- Never compute, estimate or convert. If the document shows only CGPA or grade points, set
-  percentage and percentage_as_printed to null and cgpa_only to true. Never turn CGPA into a percentage.
+- Never compute, estimate or convert. percentage is only for a figure the document itself gives as
+  a percentage. CGPA, SGPA, GPA, grade points, percentile or percentile rank (including "%ile"),
+  letter grades and division or class (e.g. "First Division") are not percentages: never put them
+  in percentage or percentage_as_printed.
+- If the document shows only CGPA or grade points, set percentage and percentage_as_printed to null
+  and cgpa_only to true. Never turn CGPA into a percentage.
+- If its overall result is only SGPA, GPA, a percentile, letter grades or a division or class, set
+  percentage and percentage_as_printed to null and cgpa_only to false.
+- If a real percentage is printed alongside CGPA or any of these, extract that percentage and set
+  cgpa_only to false.
 - If the percentage is missing, unreadable, covered by a stamp or garbled, use null. Do not
   recompute it from subject marks or totals.
 - Do not guess any field. Prefer null over a guess.
