@@ -36,12 +36,18 @@ def redact_for_vision(page_images: Sequence[np.ndarray], ocr: OcrResult, pad: in
     """Redacted copies of ``page_images`` (index == ``OcrWord.page``), PII boxes blacked out.
 
     Without word boxes we cannot know where the PII is, so the hosted model must not be called:
-    raise ``OCR_EMPTY`` (manual review).
+    raise ``OCR_EMPTY`` (manual review). The same holds per page: a page with no word boxes
+    cannot be redacted, so it is left out of the returned list.
     """
     if not ocr.has_boxes:
         raise PipelineError(ErrorClass.OCR_EMPTY)
+    pages_with_boxes = {word.page for word in ocr.words}
     pii_words = find_pii_words(ocr)
     by_page: dict[int, list[OcrWord]] = {}
     for word in pii_words:
         by_page.setdefault(word.page, []).append(word)
-    return [redact_boxes(img, by_page.get(i, []), pad=pad) for i, img in enumerate(page_images)]
+    return [
+        redact_boxes(img, by_page.get(i, []), pad=pad)
+        for i, img in enumerate(page_images)
+        if i in pages_with_boxes
+    ]
